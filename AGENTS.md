@@ -48,7 +48,7 @@ The **map** is a persistent, accumulative view of the repo's code structure.
 3. **Complete over time.** The map grows gradually as we understand more of the repo. Over many sessions, it becomes a full architectural map.
 4. **Structural relationships only.** Map edges show static relationships: `inherits`, `implements`, `uses`, `composition`, `aggregation`. Not runtime call flows.
 5. **Folders as containers.** Group nodes by their folder/directory.
-6. **File**: `demo/public/map.json`
+6. **File**: `projects/{repo-name}/map.json`
 
 ### Trace Mode (`trace-{name}.json`)
 A **trace** overlays a numbered call flow path on top of the map — like drawing a route on a real map.
@@ -61,7 +61,7 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
 5. **Start point marked.** The first node in the trace is marked as `start: true`.
 6. **Step limit.** User can specify how many steps to trace. When reached, stop and wait for feedback before continuing deeper.
 7. **Trace edges are separate from map edges.** Trace uses `type: "trace"` edges with step numbers, rendered as a distinct style (e.g., bold red/orange numbered line) overlaid on the map's structural edges.
-7. **File**: `demo/public/traces/{name}.json`
+7. **File**: `projects/{repo-name}/traces/{name}.json`
 
 ### Trace JSON Schema (`traces/{name}.json`)
 ```json

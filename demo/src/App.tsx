@@ -367,19 +367,20 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
   const [traceInfo, setTraceInfo] = useState<TraceData | null>(null);
+  const projectName = 'workload-ml';
   const [traceFiles] = useState<string[]>(['startup']);
   const [clicked, setClicked] = useState<string | null>(null);
 
   // Load map + optional trace
   useEffect(() => {
     const loadData = async () => {
-      const mapRes = await fetch('/map.json');
+      const mapRes = await fetch(`/projects/${projectName}/map.json`);
       const mapData: MapData = await mapRes.json();
 
       let traceData: TraceData | null = null;
       if (activeTrace) {
         try {
-          const traceRes = await fetch(`/traces/${activeTrace}.json`);
+          const traceRes = await fetch(`/projects/${projectName}/traces/${activeTrace}.json`);
           traceData = await traceRes.json();
           setTraceInfo(traceData);
         } catch {
