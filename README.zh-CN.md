@@ -29,7 +29,7 @@
 ## 🚀 快速开始
 
 ```bash
-cd demo
+cd web
 npm install
 npm run dev
 ```
@@ -39,7 +39,7 @@ npm run dev
 ## 📁 项目结构
 
 ```
-demo/
+web/
   public/
     map.json                 # 持久化的代码结构地图
     traces/
@@ -119,3 +119,4 @@ AGENTS.md                    # AI 生成图表的规则
 ## License
 
 MIT
+

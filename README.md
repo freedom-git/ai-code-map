@@ -27,7 +27,7 @@ An interactive code visualization tool that helps you **understand large codebas
 ## 🚀 Quick Start
 
 ```bash
-cd demo
+cd web
 npm install
 npm run dev
 ```
@@ -37,7 +37,7 @@ Open http://localhost:5173/ — toggle between Map and Trace modes using the but
 ## 📁 Project Structure
 
 ```
-demo/
+web/
   public/
     map.json                 # Persistent code structure map
     traces/
@@ -121,4 +121,5 @@ Most code visualization tools draw the **entire** repo at once — producing an 
 ## License
 
 MIT
+
 
