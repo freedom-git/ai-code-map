@@ -150,7 +150,7 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
           const methodName = m.split('(')[0]?.split('.').pop()?.replace(/^\+\s*/, '');
           const hits = (data.traceHits ?? []).filter((h) => {
             const hitMethod = h.method.split('(')[0]?.split('.').pop();
-            return hitMethod && methodName && m.includes(hitMethod);
+            return hitMethod && methodName && methodName === hitMethod;
           });
           return (
             <div key={i} style={{
@@ -510,22 +510,14 @@ export default function App() {
     loadData();
   }, [activeProject, activeTrace]);
 
-  const handleNodesChange: typeof onNodesChange = useCallback((changes) => {
-    onNodesChange(changes);
-    // Update ref after position changes (drag end)
-    const hasPositionChange = changes.some((c) => c.type === 'position' && c.dragging === false);
-    if (hasPositionChange) {
-      // setNodes triggers a re-render; read latest from state via functional update
-      setNodes((current) => {
-        nodesRef.current = current;
-        // Save immediately on drag end
-        if (activeProject) {
-          savePositions(positionKey(activeProject, activeTrace), current);
-        }
-        return current;
-      });
+  const onNodeDragStop = useCallback((_event: React.MouseEvent, node: Node) => {
+    nodesRef.current = nodesRef.current.map(n =>
+      n.id === node.id ? { ...n, position: node.position } : n
+    );
+    if (activeProject) {
+      savePositions(positionKey(activeProject, activeTrace), nodesRef.current);
     }
-  }, [onNodesChange, setNodes, activeProject, activeTrace]);
+  }, [activeProject, activeTrace]);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     if (node.type === 'uml') {
@@ -702,7 +694,8 @@ export default function App() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          onNodesChange={handleNodesChange}
+          onNodesChange={onNodesChange}
+          onNodeDragStop={onNodeDragStop}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
