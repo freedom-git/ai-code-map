@@ -43,17 +43,21 @@ interface FolderNodeData {
   [key: string]: unknown;
 }
 
+interface MapNode {
+  id: string;
+  className: string;
+  stereotype?: string;
+  attributes?: string[];
+  methods?: string[];
+  group?: string;
+  filePath?: string;
+  folder?: string;
+  x?: number;
+  y?: number;
+}
+
 interface MapData {
-  nodes: {
-    id: string;
-    className: string;
-    stereotype?: string;
-    attributes?: string[];
-    methods?: string[];
-    group?: string;
-    filePath?: string;
-    folder?: string;
-  }[];
+  nodes: MapNode[];
   edges: { source: string; target: string; label?: string; type?: string }[];
   folders?: { id: string; label: string }[];
 }
@@ -69,6 +73,7 @@ interface TraceData {
   name: string;
   description: string;
   steps: TraceStep[];
+  positions?: Record<string, { x: number; y: number }>;
 }
 
 //  Colors 
@@ -193,40 +198,47 @@ const nodeTypes = { uml: UmlNode, folder: FolderNode };
 
 type PositionMap = Record<string, { x: number; y: number }>;
 
-async function savePositions(projectId: string, traceName: string | null, nodes: Node[]): Promise<void> {
-  const positions: Record<string, PositionMap> = {};
-  const viewKey = traceName ?? '__map__';
-  // Load existing positions file to preserve other views
-  try {
-    const res = await fetch(`/api/positions/${projectId}`);
-    if (res.ok) {
-      const existing = await res.json();
-      Object.assign(positions, existing);
-    }
-  } catch { /* ignore */ }
-  // Update positions for this view
-  const viewPositions: PositionMap = {};
+async function savePositions(
+  projectId: string,
+  traceName: string | null,
+  nodes: Node[],
+): Promise<void> {
+  const positions: PositionMap = {};
   for (const n of nodes) {
-    viewPositions[n.id] = { x: n.position.x, y: n.position.y };
+    if (n.type === 'folder') continue;
+    positions[n.id] = { x: n.position.x, y: n.position.y };
   }
-  positions[viewKey] = viewPositions;
   try {
-    await fetch(`/api/positions/${projectId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(positions),
-    });
+    if (traceName) {
+      await fetch(`/api/save-positions/${projectId}/trace/${traceName}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(positions),
+      });
+    } else {
+      await fetch(`/api/save-positions/${projectId}/map`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(positions),
+      });
+    }
   } catch { /* ignore */ }
 }
 
-async function loadPositions(projectId: string, traceName: string | null): Promise<PositionMap | null> {
-  try {
-    const res = await fetch(`/api/positions/${projectId}`);
-    if (!res.ok) return null;
-    const all = await res.json();
-    const viewKey = traceName ?? '__map__';
-    return all[viewKey] ?? null;
-  } catch { return null; }
+function loadPositionsFromMap(mapData: MapData): PositionMap | null {
+  const positions: PositionMap = {};
+  let found = false;
+  for (const n of mapData.nodes) {
+    if (n.x != null && n.y != null) {
+      positions[n.id] = { x: n.x, y: n.y };
+      found = true;
+    }
+  }
+  return found ? positions : null;
+}
+
+function loadPositionsFromTrace(traceData: TraceData): PositionMap | null {
+  return traceData.positions ?? null;
 }
 
 function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
@@ -503,8 +515,10 @@ export default function App() {
         setError(null);
         let { nodes: newNodes, edges } = layoutGraph(mapData, traceData);
 
-        // Restore saved positions if available
-        const saved = await loadPositions(activeProject, activeTrace);
+        // Restore saved positions from map.json or trace file
+        const saved = activeTrace && traceData
+          ? loadPositionsFromTrace(traceData)
+          : loadPositionsFromMap(mapData);
         if (saved) {
           newNodes = applyPositions(newNodes, saved);
         }

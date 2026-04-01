@@ -43,41 +43,49 @@ function serveProjects(): Plugin {
         res.end(JSON.stringify(traces));
       });
 
-      // API: save/load node positions for a project
-      server.middlewares.use('/api/positions/', (req, res, next) => {
-        const projectId = req.url?.replace(/^\//, '').replace(/\/$/, '');
-        if (!projectId) { next(); return; }
-        const posFile = path.join(projectsDir, projectId, 'positions.json');
+      // API: save node positions into map.json or trace file
+      server.middlewares.use('/api/save-positions/', (req, res, next) => {
+        if (req.method !== 'PUT') { next(); return; }
+        const urlParts = (req.url ?? '').replace(/^\//, '').split('/');
+        const projectId = urlParts[0];
+        const target = urlParts[1]; // 'map' or 'trace'
+        const traceName = urlParts[2]; // only for trace
+        if (!projectId || !target) { next(); return; }
 
-        if (req.method === 'GET') {
-          if (fs.existsSync(posFile)) {
-            res.setHeader('Content-Type', 'application/json');
-            fs.createReadStream(posFile).pipe(res);
-          } else {
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({}));
-          }
-          return;
-        }
+        let body = '';
+        req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        req.on('end', () => {
+          try {
+            const positions = JSON.parse(body);
 
-        if (req.method === 'PUT') {
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', () => {
-            try {
-              const data = JSON.parse(body);
-              fs.writeFileSync(posFile, JSON.stringify(data, null, 2));
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ ok: true }));
-            } catch {
+            if (target === 'map') {
+              const mapFile = path.join(projectsDir, projectId, 'map.json');
+              if (!fs.existsSync(mapFile)) { res.statusCode = 404; res.end('{}'); return; }
+              const mapData = JSON.parse(fs.readFileSync(mapFile, 'utf-8'));
+              for (const node of mapData.nodes) {
+                const pos = positions[node.id];
+                if (pos) { node.x = pos.x; node.y = pos.y; }
+              }
+              fs.writeFileSync(mapFile, JSON.stringify(mapData, null, 2));
+            } else if (target === 'trace' && traceName) {
+              const traceFile = path.join(projectsDir, projectId, 'traces', `${traceName}.json`);
+              if (!fs.existsSync(traceFile)) { res.statusCode = 404; res.end('{}'); return; }
+              const traceData = JSON.parse(fs.readFileSync(traceFile, 'utf-8'));
+              traceData.positions = positions;
+              fs.writeFileSync(traceFile, JSON.stringify(traceData, null, 2));
+            } else {
               res.statusCode = 400;
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              res.end(JSON.stringify({ error: 'Invalid target' }));
+              return;
             }
-          });
-          return;
-        }
 
-        next();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+          } catch {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
       });
 
       // Serve project files
