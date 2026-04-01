@@ -1,3 +1,5 @@
+**⚠️ RULE: Do NOT commit code without user review. Always wait for explicit approval before running `git commit`.**
+
 # Code Insight - Agent Instructions
 
 ## Graph Generation Rules
@@ -11,20 +13,22 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
    - `stereotype`: e.g., `Controller`, `Abstract`, `Static`, `Interface`, `Service`, `Repository`
    - `attributes`: List of public properties/fields with types (e.g., `"EndpointName: string {abstract}"`)
    - `methods`: List of public methods with return types (e.g., `"GetVersionsAsync(): Task<IActionResult>"`)
+   - `filePath`: Relative path to the source file from repo root (e.g., `"Components/ModelEndpoints/.../Controllers/MyController.cs"`)
    - `group`: Category for color coding (`controller`, `infrastructure`, `base`, `service`, `model`, `repository`)
 3. **Only show public members.** Do not include private/protected/internal members.
 4. **Keep method signatures concise.** Use short parameter names, omit attributes like `[HttpGet]` from the method list.
 
 ### Edge Rules (UML-Compliant)
-1. **All edges have directional arrows following UML standards.**
-2. **`type: "inherits"`** (Generalization) — solid green line + **hollow triangle** ——▷, child → parent
-3. **`type: "implements"`** (Realization) — dashed blue line + **hollow triangle** --▷, class → interface
-4. **`type: "uses"`** (Dependency) — dashed gray line + **open arrowhead** -->, dependent → dependency
-5. **`type: "call"`** (Association) — solid amber line + **filled arrowhead** ——▶, caller → callee (animated)
-6. **`type: "composition"`** — solid purple line + **filled diamond** ——◆, whole → part (part can't exist without whole)
-7. **`type: "aggregation"`** — solid purple line + **hollow diamond** ——◇, whole → part (part can exist independently)
+1. **All edges have directional arrows** pointing from `source` to `target`.
+2. **`type: "inherits"`** (Generalization) — solid green line + **open arrow** ——▷, child → parent
+3. **`type: "implements"`** (Realization) — dashed blue line + **open arrow** --▷, class → interface
+4. **`type: "uses"`** (Dependency) — dashed gray line + **open arrow** -->, dependent → dependency
+5. **`type: "call"`** (Association) — solid amber line + **filled arrow** ——▶, caller → callee (animated)
+6. **`type: "composition"`** — solid purple line + **filled arrow** ——▶, whole → part
+7. **`type: "aggregation"`** — solid purple line + **open arrow** ——▷, whole → part
 8. Always include a `label` describing the relationship.
 9. **Direction convention**: `source` is the origin (child/caller/dependent/whole), `target` is the destination (parent/callee/dependency/part).
+10. **Note**: Hollow triangles/diamonds are not yet supported. Using open/filled arrows as approximation for now.
 
 ### Scope Rules
 1. **Question-driven.** Only show classes relevant to the user's question — not the entire repo.
@@ -41,6 +45,7 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
       "className": "ClassName",
       "stereotype": "Controller",
       "group": "controller",
+      "filePath": "relative/path/to/File.cs",
       "attributes": ["PropertyName: Type"],
       "methods": ["MethodName(params): ReturnType"]
     }
