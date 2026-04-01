@@ -26,6 +26,7 @@ interface UmlNodeData {
   group?: string;
   filePath?: string;
   traceStep?: number;
+  traceMethod?: string;
   traceDesc?: string;
   [key: string]: unknown;
 }
@@ -115,20 +116,6 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
     }}>
       <Handle type="target" position={Position.Top} style={{ background: colors.header }} />
 
-      {/* Trace step badge */}
-      {isTraced && (
-        <div style={{
-          position: 'absolute', top: -14, right: -14, zIndex: 20,
-          width: 28, height: 28, borderRadius: '50%',
-          background: '#ef4444', color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 900, fontSize: 14, fontFamily: 'sans-serif',
-          border: '2px solid #0f172a',
-        }}>
-          {data.traceStep}
-        </div>
-      )}
-
       {/* Header */}
       <div style={{
         background: colors.header, color: '#fff', padding: '6px 12px',
@@ -142,17 +129,6 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
         {data.className}
       </div>
 
-      {/* Trace description */}
-      {isTraced && data.traceDesc && (
-        <div style={{
-          background: 'rgba(239,68,68,0.15)', padding: '4px 10px',
-          color: '#fca5a5', fontSize: 10, textAlign: 'center',
-          borderBottom: '1px solid #334155',
-        }}>
-           {data.traceDesc}
-        </div>
-      )}
-
       {/* Attributes */}
       <div style={{ borderBottom: '1px solid #334155', padding: '6px 10px', color: '#94a3b8' }}>
         {(data.attributes ?? []).length === 0
@@ -162,7 +138,25 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
 
       {/* Methods */}
       <div style={{ padding: '6px 10px', color: '#e2e8f0' }}>
-        {(data.methods ?? []).map((m, i) => <div key={i}>{m}</div>)}
+        {(data.methods ?? []).map((m, i) => {
+          const isTarget = isTraced && data.traceMethod && m.includes(data.traceMethod);
+          return (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              {isTarget && (
+                <span style={{
+                  color: '#ef4444',
+                  fontWeight: 900, fontSize: 13, fontFamily: 'sans-serif',
+                  flexShrink: 0,
+                }}>
+                  {data.traceStep}
+                </span>
+              )}
+              <span>{m}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* File path */}
@@ -300,7 +294,7 @@ function layoutGraph(
         group: n.group,
         filePath: n.filePath,
         traceStep: traceStep?.step,
-        traceDesc: traceStep ? `${traceStep.method}  ${traceStep.description}` : undefined,
+        traceMethod: traceStep?.method?.split('(')[0]?.split('.').pop(),
       },
     });
   }
@@ -347,7 +341,7 @@ function layoutGraph(
         id: `trace-e-${i}`,
         source: from.nodeId,
         target: to.nodeId,
-        label: ``[to.step] ?? `${to.step}`,
+        label: `${to.step}. ${to.method}`,
         animated: true,
         zIndex: 10,
         style: {
@@ -355,7 +349,7 @@ function layoutGraph(
           strokeWidth: 3,
         },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 24, height: 24 },
-        labelStyle: { fontSize: 16, fill: '#ef4444', fontWeight: 900 },
+        labelStyle: { fontSize: 11, fill: '#fca5a5', fontWeight: 600 },
         labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
         labelBgPadding: [6, 4] as [number, number],
         labelBgBorderRadius: 8,
@@ -373,15 +367,8 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
   const [traceInfo, setTraceInfo] = useState<TraceData | null>(null);
-  const [traceFiles, setTraceFiles] = useState<string[]>([]);
+  const [traceFiles] = useState<string[]>(['startup']);
   const [clicked, setClicked] = useState<string | null>(null);
-
-  // Discover available traces
-  useEffect(() => {
-    // Hardcoded for now  could be made dynamic with an index file
-    const knownTraces = ['startup'];
-    setTraceFiles(knownTraces);
-  }, []);
 
   // Load map + optional trace
   useEffect(() => {
@@ -392,7 +379,7 @@ export default function App() {
       let traceData: TraceData | null = null;
       if (activeTrace) {
         try {
-          const traceRes = await fetch(`/trace-${activeTrace}.json`);
+          const traceRes = await fetch(`/traces/${activeTrace}.json`);
           traceData = await traceRes.json();
           setTraceInfo(traceData);
         } catch {
@@ -419,77 +406,140 @@ export default function App() {
     }
   }, []);
 
+  const sidebarWidth = traceInfo ? 320 : 0;
+
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#0f172a' }}>
-      {/* Mode switcher */}
-      <div style={{
-        position: 'absolute', top: 12, right: 12, zIndex: 20,
-        display: 'flex', gap: 8, alignItems: 'center',
-      }}>
-        <button
-          onClick={() => setActiveTrace(null)}
-          style={{
-            padding: '6px 14px', borderRadius: 6, border: '1px solid #334155',
-            background: activeTrace === null ? '#3b82f6' : '#1e293b',
-            color: '#e2e8f0', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-          }}
-        >
-           Map
-        </button>
-        {traceFiles.map((t) => (
+    <div style={{ width: '100vw', height: '100vh', background: '#0f172a', display: 'flex' }}>
+
+      {/* Left sidebar — trace steps */}
+      {traceInfo && (
+        <div style={{
+          width: sidebarWidth, minWidth: sidebarWidth, height: '100vh',
+          background: '#111827', borderRight: '1px solid #1f2937',
+          overflowY: 'auto', padding: 0, flexShrink: 0,
+        }}>
+          {/* Trace header */}
+          <div style={{
+            padding: '16px 16px 12px', borderBottom: '1px solid #1f2937',
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#ef4444', marginBottom: 4 }}>
+              🔍 {traceInfo.name}
+            </div>
+            <div style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.4 }}>
+              {traceInfo.description}
+            </div>
+          </div>
+
+          {/* Steps list */}
+          <div style={{ padding: '8px 0' }}>
+            {traceInfo.steps.map((step) => (
+              <div key={step.step} style={{
+                display: 'flex', gap: 10, padding: '10px 16px',
+                borderBottom: '1px solid #1f2937',
+                cursor: 'default',
+              }}>
+                {/* Step number */}
+                <div style={{
+                  width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+                  background: '#ef4444', color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 900, fontSize: 13, fontFamily: 'sans-serif',
+                }}>
+                  {step.step}
+                </div>
+                {/* Step info */}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, color: '#e2e8f0',
+                    fontFamily: 'monospace',
+                  }}>
+                    {step.method}
+                  </div>
+                  <div style={{
+                    fontSize: 11, color: '#9ca3af', marginTop: 2, lineHeight: 1.3,
+                  }}>
+                    {step.description}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Close button */}
+          <div style={{ padding: '12px 16px' }}>
+            <button
+              onClick={() => setActiveTrace(null)}
+              style={{
+                width: '100%', padding: '8px', borderRadius: 6,
+                border: '1px solid #374151', background: '#1f2937',
+                color: '#9ca3af', cursor: 'pointer', fontSize: 12,
+              }}
+            >
+              ← Back to Map
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Right side — graph */}
+      <div style={{ flex: 1, height: '100vh', position: 'relative' }}>
+
+        {/* Mode switcher — top right */}
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 20,
+          display: 'flex', gap: 8, alignItems: 'center',
+        }}>
           <button
-            key={t}
-            onClick={() => setActiveTrace(t)}
+            onClick={() => setActiveTrace(null)}
             style={{
               padding: '6px 14px', borderRadius: 6, border: '1px solid #334155',
-              background: activeTrace === t ? '#ef4444' : '#1e293b',
+              background: activeTrace === null ? '#3b82f6' : '#1e293b',
               color: '#e2e8f0', cursor: 'pointer', fontSize: 12, fontWeight: 600,
             }}
           >
-            � {t}
+            🗺️ Map
           </button>
-        ))}
+          {traceFiles.map((t) => (
+            <button
+              key={t}
+              onClick={() => setActiveTrace(t)}
+              style={{
+                padding: '6px 14px', borderRadius: 6, border: '1px solid #334155',
+                background: activeTrace === t ? '#ef4444' : '#1e293b',
+                color: '#e2e8f0', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              }}
+            >
+              🔍 {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Click toast */}
+        {clicked && !traceInfo && (
+          <div style={{
+            position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 10, background: '#1e293b', color: '#e2e8f0', padding: '8px 20px',
+            borderRadius: 8, fontSize: 14, border: '1px solid #334155',
+          }}>
+            {clicked}
+          </div>
+        )}
+
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          nodeTypes={nodeTypes}
+          fitView
+          colorMode="dark"
+        >
+          <Background />
+          <Controls />
+          <MiniMap />
+        </ReactFlow>
       </div>
-
-      {/* Trace info banner */}
-      {traceInfo && (
-        <div style={{
-          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 20, background: 'rgba(239,68,68,0.15)', color: '#fca5a5',
-          padding: '6px 20px', borderRadius: 8, fontSize: 13,
-          border: '1px solid #ef4444', maxWidth: 500, textAlign: 'center',
-        }}>
-          <strong>Trace: {traceInfo.name}</strong>  {traceInfo.description}
-          <br />
-          <span style={{ fontSize: 11, opacity: 0.7 }}>{traceInfo.steps.length} steps</span>
-        </div>
-      )}
-
-      {/* Click toast */}
-      {clicked && !traceInfo && (
-        <div style={{
-          position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 10, background: '#1e293b', color: '#e2e8f0', padding: '8px 20px',
-          borderRadius: 8, fontSize: 14, border: '1px solid #334155',
-        }}>
-          {clicked}
-        </div>
-      )}
-
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
-        nodeTypes={nodeTypes}
-        fitView
-        colorMode="dark"
-      >
-        <Background />
-        <Controls />
-        <MiniMap />
-      </ReactFlow>
     </div>
   );
 }

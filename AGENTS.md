@@ -61,9 +61,9 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
 5. **Start point marked.** The first node in the trace is marked as `start: true`.
 6. **Step limit.** User can specify how many steps to trace. When reached, stop and wait for feedback before continuing deeper.
 7. **Trace edges are separate from map edges.** Trace uses `type: "trace"` edges with step numbers, rendered as a distinct style (e.g., bold red/orange numbered line) overlaid on the map's structural edges.
-8. **File**: `demo/public/trace-{name}.json`
+7. **File**: `demo/public/traces/{name}.json`
 
-### Trace JSON Schema (`trace-{name}.json`)
+### Trace JSON Schema (`traces/{name}.json`)
 ```json
 {
   "name": "get-versions",
@@ -84,6 +84,12 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
   ]
 }
 ```
+
+### Trace Display Rules
+1. **Step number on method row.** In trace mode, the step number appears as a red number inline before the target method inside the UML node — no background highlight, no color change on the method text.
+2. **Trace edges show method.** Edge labels show `{step}. {method}` (e.g., `2. RunAsync()`).
+3. **Left sidebar.** Trace steps are listed in a left sidebar panel with step number, method, and description on separate lines.
+4. **Node border.** Traced nodes get a red border and glow, but no other styling changes inside.
 
 ### Mode Switching
 - When user asks about **structure** ("show me the classes in X", "what extends Y") → **Map mode**
