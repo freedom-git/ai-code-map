@@ -16,6 +16,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import Dagre from 'dagre';
 
+//  Types 
+
 interface UmlNodeData {
   className: string;
   stereotype?: string;
@@ -23,6 +25,8 @@ interface UmlNodeData {
   methods?: string[];
   group?: string;
   filePath?: string;
+  traceStep?: number;
+  traceDesc?: string;
   [key: string]: unknown;
 }
 
@@ -31,7 +35,7 @@ interface FolderNodeData {
   [key: string]: unknown;
 }
 
-interface GraphData {
+interface MapData {
   nodes: {
     id: string;
     className: string;
@@ -45,6 +49,21 @@ interface GraphData {
   edges: { source: string; target: string; label?: string; type?: string }[];
   folders?: { id: string; label: string }[];
 }
+
+interface TraceStep {
+  step: number;
+  nodeId: string;
+  method: string;
+  description: string;
+}
+
+interface TraceData {
+  name: string;
+  description: string;
+  steps: TraceStep[];
+}
+
+//  Colors 
 
 const GROUP_COLORS: Record<string, { header: string; border: string }> = {
   controller: { header: '#3b82f6', border: '#2563eb' },
@@ -63,6 +82,8 @@ const FOLDER_COLORS = [
   { bg: 'rgba(20,184,166,0.08)', border: '#0d9488' },
 ];
 
+//  Node Components 
+
 function FolderNode({ data }: NodeProps<Node<FolderNodeData>>) {
   return (
     <div style={{
@@ -75,7 +96,7 @@ function FolderNode({ data }: NodeProps<Node<FolderNodeData>>) {
         fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
         whiteSpace: 'nowrap', pointerEvents: 'auto',
       }}>
-        📂 {data.label}
+         {data.label}
       </div>
     </div>
   );
@@ -83,13 +104,30 @@ function FolderNode({ data }: NodeProps<Node<FolderNodeData>>) {
 
 function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
   const colors = GROUP_COLORS[data.group ?? ''] ?? GROUP_COLORS.base;
+  const isTraced = data.traceStep != null;
   return (
     <div style={{
-      background: '#1e293b', border: `2px solid ${colors.border}`,
+      background: '#1e293b',
+      border: isTraced ? '3px solid #ef4444' : `2px solid ${colors.border}`,
       borderRadius: 6, minWidth: 280, fontFamily: 'monospace', fontSize: 12,
-      overflow: 'hidden',
+      overflow: 'hidden', position: 'relative',
+      boxShadow: isTraced ? '0 0 16px rgba(239,68,68,0.4)' : undefined,
     }}>
       <Handle type="target" position={Position.Top} style={{ background: colors.header }} />
+
+      {/* Trace step badge */}
+      {isTraced && (
+        <div style={{
+          position: 'absolute', top: -14, right: -14, zIndex: 20,
+          width: 28, height: 28, borderRadius: '50%',
+          background: '#ef4444', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 900, fontSize: 14, fontFamily: 'sans-serif',
+          border: '2px solid #0f172a',
+        }}>
+          {data.traceStep}
+        </div>
+      )}
 
       {/* Header */}
       <div style={{
@@ -98,16 +136,27 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
       }}>
         {data.stereotype && (
           <div style={{ fontSize: 10, fontWeight: 400, opacity: 0.8 }}>
-            «{data.stereotype}»
+            {data.stereotype}
           </div>
         )}
         {data.className}
       </div>
 
+      {/* Trace description */}
+      {isTraced && data.traceDesc && (
+        <div style={{
+          background: 'rgba(239,68,68,0.15)', padding: '4px 10px',
+          color: '#fca5a5', fontSize: 10, textAlign: 'center',
+          borderBottom: '1px solid #334155',
+        }}>
+           {data.traceDesc}
+        </div>
+      )}
+
       {/* Attributes */}
       <div style={{ borderBottom: '1px solid #334155', padding: '6px 10px', color: '#94a3b8' }}>
         {(data.attributes ?? []).length === 0
-          ? <div style={{ opacity: 0.4, fontStyle: 'italic' }}>—</div>
+          ? <div style={{ opacity: 0.4, fontStyle: 'italic' }}></div>
           : (data.attributes ?? []).map((a, i) => <div key={i}>+ {a}</div>)}
       </div>
 
@@ -123,7 +172,7 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
           color: '#64748b', fontSize: 10, fontStyle: 'italic',
           textAlign: 'center', wordBreak: 'break-all',
         }}>
-          📁 {data.filePath.split('/').pop()}
+           {data.filePath.split('/').pop()}
         </div>
       )}
 
@@ -134,71 +183,72 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
 
 const nodeTypes = { uml: UmlNode, folder: FolderNode };
 
-function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
+//  Layout 
+
+function layoutGraph(
+  mapData: MapData,
+  traceData: TraceData | null,
+): { nodes: Node[]; edges: Edge[] } {
   const g = new Dagre.graphlib.Graph({ compound: true }).setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 120 });
 
-  // Group nodes by folder
-  const folderMap = new Map<string, typeof data.nodes>();
-  const noFolder: typeof data.nodes = [];
-  for (const n of data.nodes) {
-    if (n.folder) {
-      if (!folderMap.has(n.folder)) folderMap.set(n.folder, []);
-      folderMap.get(n.folder)!.push(n);
-    } else {
-      noFolder.push(n);
+  // Build trace lookup
+  const traceStepMap = new Map<string, TraceStep>();
+  if (traceData) {
+    for (const s of traceData.steps) {
+      traceStepMap.set(s.nodeId, s);
     }
   }
 
-  // Register folder groups in dagre
-  const folders = data.folders ?? [];
+  // Group nodes by folder
+  const folderMap = new Map<string, typeof mapData.nodes>();
+  for (const n of mapData.nodes) {
+    if (n.folder) {
+      if (!folderMap.has(n.folder)) folderMap.set(n.folder, []);
+      folderMap.get(n.folder)!.push(n);
+    }
+  }
+
+  const folders = mapData.folders ?? [];
   for (const f of folders) {
     g.setNode(f.id, { width: 1, height: 1 });
   }
 
-  // Register all class nodes
-  for (const n of data.nodes) {
+  for (const n of mapData.nodes) {
     const methodCount = (n.methods ?? []).length;
     const attrCount = (n.attributes ?? []).length;
-    const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18 + (n.filePath ? 24 : 0);
+    const hasTrace = traceStepMap.has(n.id);
+    const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18
+      + (n.filePath ? 24 : 0) + (hasTrace ? 24 : 0);
     g.setNode(n.id, { width: 340, height });
-    if (n.folder) {
-      g.setParent(n.id, n.folder);
-    }
+    if (n.folder) g.setParent(n.id, n.folder);
   }
 
-  data.edges.forEach((e) => g.setEdge(e.source, e.target));
+  mapData.edges.forEach((e) => g.setEdge(e.source, e.target));
   Dagre.layout(g);
 
   const nodes: Node[] = [];
 
-  // Create folder container nodes
+  // Folder containers
   for (const f of folders) {
     const children = folderMap.get(f.id) ?? [];
     if (children.length === 0) continue;
-
-    // Calculate bounding box from children
     const paddingX = 50;
     const paddingY = 40;
     const titleHeight = 36;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const c of children) {
       const pos = g.node(c.id);
-      const nodeInfo = g.node(c.id);
-      minX = Math.min(minX, pos.x - nodeInfo.width / 2);
-      minY = Math.min(minY, pos.y - nodeInfo.height / 2);
-      maxX = Math.max(maxX, pos.x + nodeInfo.width / 2);
-      maxY = Math.max(maxY, pos.y + nodeInfo.height / 2);
+      minX = Math.min(minX, pos.x - pos.width / 2);
+      minY = Math.min(minY, pos.y - pos.height / 2);
+      maxX = Math.max(maxX, pos.x + pos.width / 2);
+      maxY = Math.max(maxY, pos.y + pos.height / 2);
     }
-
-    // Ensure folder is at least as wide as the label
     const labelWidth = f.label.length * 8 + 60;
     const contentWidth = maxX - minX + paddingX * 2;
     const folderWidth = Math.max(contentWidth, labelWidth);
-
     const folderIdx = folders.indexOf(f) % FOLDER_COLORS.length;
     const fc = FOLDER_COLORS[folderIdx];
-
     nodes.push({
       id: f.id,
       type: 'folder',
@@ -216,14 +266,12 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
     });
   }
 
-  // Create class nodes
-  for (const n of data.nodes) {
+  // Class nodes
+  for (const n of mapData.nodes) {
     const pos = g.node(n.id);
     const folder = folders.find((f) => f.id === n.folder);
     let x = pos.x - 170;
     let y = pos.y;
-
-    // If in a folder, make position relative to folder container
     if (folder) {
       const children = folderMap.get(folder.id) ?? [];
       const paddingX = 50;
@@ -232,14 +280,13 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
       let minX = Infinity, minY = Infinity;
       for (const c of children) {
         const cp = g.node(c.id);
-        const ci = g.node(c.id);
-        minX = Math.min(minX, cp.x - ci.width / 2);
-        minY = Math.min(minY, cp.y - ci.height / 2);
+        minX = Math.min(minX, cp.x - cp.width / 2);
+        minY = Math.min(minY, cp.y - cp.height / 2);
       }
       x = pos.x - 170 - (minX - paddingX);
       y = pos.y - (minY - paddingY - titleHeight);
     }
-
+    const traceStep = traceStepMap.get(n.id);
     nodes.push({
       id: n.id,
       type: 'uml',
@@ -252,11 +299,14 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
         methods: n.methods,
         group: n.group,
         filePath: n.filePath,
+        traceStep: traceStep?.step,
+        traceDesc: traceStep ? `${traceStep.method}  ${traceStep.description}` : undefined,
       },
     });
   }
 
-  // Edge styles
+  //  Edges 
+
   const EDGE_STYLES: Record<string, {
     stroke: string; dash?: string; animated?: boolean;
     markerType?: MarkerType;
@@ -269,10 +319,11 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
     aggregation: { stroke: '#e879f9',               markerType: MarkerType.Arrow },
   };
 
-  const edges: Edge[] = data.edges.map((e, i) => {
+  // Map edges (structural)
+  const edges: Edge[] = mapData.edges.map((e, i) => {
     const es = EDGE_STYLES[e.type ?? 'uses'] ?? EDGE_STYLES.uses;
     return {
-      id: `e-${i}`,
+      id: `map-e-${i}`,
       source: e.source,
       target: e.target,
       label: e.label,
@@ -287,33 +338,135 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
     };
   });
 
+  // Trace edges (numbered call flow)
+  if (traceData) {
+    for (let i = 0; i < traceData.steps.length - 1; i++) {
+      const from = traceData.steps[i];
+      const to = traceData.steps[i + 1];
+      edges.push({
+        id: `trace-e-${i}`,
+        source: from.nodeId,
+        target: to.nodeId,
+        label: ``[to.step] ?? `${to.step}`,
+        animated: true,
+        zIndex: 10,
+        style: {
+          stroke: '#ef4444',
+          strokeWidth: 3,
+        },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444', width: 24, height: 24 },
+        labelStyle: { fontSize: 16, fill: '#ef4444', fontWeight: 900 },
+        labelBgStyle: { fill: '#0f172a', fillOpacity: 0.9 },
+        labelBgPadding: [6, 4] as [number, number],
+        labelBgBorderRadius: 8,
+      });
+    }
+  }
+
   return { nodes, edges };
 }
+
+//  App 
 
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [activeTrace, setActiveTrace] = useState<string | null>(null);
+  const [traceInfo, setTraceInfo] = useState<TraceData | null>(null);
+  const [traceFiles, setTraceFiles] = useState<string[]>([]);
   const [clicked, setClicked] = useState<string | null>(null);
 
+  // Discover available traces
   useEffect(() => {
-    fetch('/graph.json')
-      .then((r) => r.json())
-      .then((data: GraphData) => {
-        const { nodes, edges } = layoutGraph(data);
-        setNodes(nodes);
-        setEdges(edges);
-      });
+    // Hardcoded for now  could be made dynamic with an index file
+    const knownTraces = ['startup'];
+    setTraceFiles(knownTraces);
   }, []);
+
+  // Load map + optional trace
+  useEffect(() => {
+    const loadData = async () => {
+      const mapRes = await fetch('/map.json');
+      const mapData: MapData = await mapRes.json();
+
+      let traceData: TraceData | null = null;
+      if (activeTrace) {
+        try {
+          const traceRes = await fetch(`/trace-${activeTrace}.json`);
+          traceData = await traceRes.json();
+          setTraceInfo(traceData);
+        } catch {
+          setTraceInfo(null);
+        }
+      } else {
+        setTraceInfo(null);
+      }
+
+      const { nodes, edges } = layoutGraph(mapData, traceData);
+      setNodes(nodes);
+      setEdges(edges);
+    };
+    loadData();
+  }, [activeTrace]);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     if (node.type === 'uml') {
-      setClicked(`${(node.data as UmlNodeData).className}`);
+      const d = node.data as UmlNodeData;
+      setClicked(d.traceStep
+        ? `Step ${d.traceStep}: ${d.className}`
+        : d.className,
+      );
     }
   }, []);
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#0f172a' }}>
-      {clicked && (
+      {/* Mode switcher */}
+      <div style={{
+        position: 'absolute', top: 12, right: 12, zIndex: 20,
+        display: 'flex', gap: 8, alignItems: 'center',
+      }}>
+        <button
+          onClick={() => setActiveTrace(null)}
+          style={{
+            padding: '6px 14px', borderRadius: 6, border: '1px solid #334155',
+            background: activeTrace === null ? '#3b82f6' : '#1e293b',
+            color: '#e2e8f0', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+          }}
+        >
+           Map
+        </button>
+        {traceFiles.map((t) => (
+          <button
+            key={t}
+            onClick={() => setActiveTrace(t)}
+            style={{
+              padding: '6px 14px', borderRadius: 6, border: '1px solid #334155',
+              background: activeTrace === t ? '#ef4444' : '#1e293b',
+              color: '#e2e8f0', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}
+          >
+            � {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Trace info banner */}
+      {traceInfo && (
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 20, background: 'rgba(239,68,68,0.15)', color: '#fca5a5',
+          padding: '6px 20px', borderRadius: 8, fontSize: 13,
+          border: '1px solid #ef4444', maxWidth: 500, textAlign: 'center',
+        }}>
+          <strong>Trace: {traceInfo.name}</strong>  {traceInfo.description}
+          <br />
+          <span style={{ fontSize: 11, opacity: 0.7 }}>{traceInfo.steps.length} steps</span>
+        </div>
+      )}
+
+      {/* Click toast */}
+      {clicked && !traceInfo && (
         <div style={{
           position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
           zIndex: 10, background: '#1e293b', color: '#e2e8f0', padding: '8px 20px',
@@ -322,6 +475,7 @@ export default function App() {
           {clicked}
         </div>
       )}
+
       <ReactFlow
         nodes={nodes}
         edges={edges}
