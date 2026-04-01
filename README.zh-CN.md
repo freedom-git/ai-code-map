@@ -6,6 +6,15 @@
 
 [English](README.md)
 
+## 💡 设计理念
+
+大多数代码可视化工具一次性绘制**整个**仓库 —— 对于大型项目来说会产生无法阅读的混乱图形。AI Code Map 采用不同的方法：
+
+1. **问题驱动**：你问"认证是怎么工作的？" —— 而不是"把所有东西都给我看"
+2. **增量构建**：地图随着探索逐步增长，一步步建立理解
+3. **双层分离**：结构（地图）和行为（追踪）是独立的关注点
+4. **可视化**：输出是可交互的图像，而非大段文字
+
 ## ✨ 功能特性
 
 ### 🗺️ 地图模式 — 代码结构
@@ -28,28 +37,63 @@
 
 ## 🚀 快速开始
 
-```bash
-cd web
-npm install
-npm run dev
-```
+1. **克隆本仓库**
+   ```bash
+   git clone https://github.com/freedom-git/ai-code-map.git
+   cd ai-code-map
+   ```
 
-打开 http://localhost:5173/ —— 使用右上角的按钮在地图模式和追踪模式之间切换。
+2. **使用 AI 编码助手打开**（以下任一）：
+   ```bash
+   copilot          # GitHub Copilot CLI
+   claude           # Claude Code
+   opencode         # OpenCode
+   ```
+
+3. **告诉助手你想理解哪个仓库**
+   ```
+   我想理解这个仓库：C:\path\to\my-project
+   ```
+
+4. **让助手启动查看器**
+   ```
+   启动 Web 服务
+   ```
+   然后打开 http://localhost:5173/
+
+5. **针对代码提问**
+   ```
+   展示认证模块的类结构
+   追踪 GET /api/users 被调用时的调用链
+   ```
 
 ## 📁 项目结构
 
 ```
-web/
-  public/
-    map.json                 # 持久化的代码结构地图
-    traces/
-      startup.json           # 示例：应用启动调用链
+web/                             # React Flow 查看器应用
   src/
-    App.tsx                  # React Flow 查看器（含 UML 节点）
-AGENTS.md                    # AI 生成图表的规则
+    App.tsx                      # 主查看器（含 UML 节点）
+  vite.config.ts                 # 开发服务器 + projects/ 文件服务
+projects/                        # .gitignored — 按仓库存储的用户数据
+  {repo-name}/
+    project.json                 # 项目配置（仓库路径、名称）
+    map.json                     # 持久化的代码结构地图
+    traces/
+      {name}.json                # 命名的调用链追踪
+AGENTS.md                        # AI 生成图表的规则
 ```
 
 ## 📐 数据格式
+
+### project.json
+
+```json
+{
+  "name": "my-project",
+  "repoPath": "C:\\path\\to\\repo",
+  "description": "项目简短描述"
+}
+```
 
 ### map.json
 
@@ -106,15 +150,6 @@ AGENTS.md                    # AI 生成图表的规则
 - **Dagre** — 自动层次化布局
 - **Vite + React + TypeScript** — 快速开发体验
 - **AI（Copilot CLI）** — 代码分析和 JSON 生成
-
-## 💡 设计理念
-
-大多数代码可视化工具一次性绘制**整个**仓库 —— 对于大型项目来说会产生无法阅读的混乱图形。AI Code Map 采用不同的方法：
-
-1. **问题驱动**：你问"认证是怎么工作的？" —— 而不是"把所有东西都给我看"
-2. **增量构建**：地图随着探索逐步增长，一步步建立理解
-3. **双层分离**：结构（地图）和行为（追踪）是独立的关注点
-4. **可视化**：输出是可交互的图像，而非大段文字
 
 ## License
 

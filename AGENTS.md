@@ -1,5 +1,7 @@
 **⚠️ RULE: Do NOT commit code without user review. Always wait for explicit approval before running `git commit`.**
 
+**⚠️ RULE: Before any code analysis, check if a project exists in `projects/`. If no project folder exists, ask the user to provide a repo path and project name first. Create `projects/{name}/project.json` with the repo path before proceeding.**
+
 # Code Insight - Agent Instructions
 
 ## Graph Generation Rules
@@ -34,6 +36,24 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
 1. **Question-driven.** Only show classes relevant to the user's question — not the entire repo.
 2. **First layer first.** Start from the entry point (controller, handler, etc.) and expand only as deep as the question requires.
 3. **Keep it focused.** Aim for 3-8 nodes per diagram. If more are needed, explain and ask.
+
+---
+
+## Project Configuration
+
+Each project has a `projects/{repo-name}/project.json`:
+
+```json
+{
+  "name": "workload-ml",
+  "repoPath": "Q:\\Repos\\Mwc\\workload-ml",
+  "description": "ML Workload Service"
+}
+```
+
+- `name`: Project display name
+- `repoPath`: Absolute path to the repo on disk (used by AI to analyze code)
+- `description`: Short description
 
 ---
 

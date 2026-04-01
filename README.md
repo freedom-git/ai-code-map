@@ -4,6 +4,15 @@ An interactive code visualization tool that helps you **understand large codebas
 
 > Unlike tools that dump the entire repo as one giant diagram, AI Code Map is **question-driven** — you ask about a specific part of the code, and it builds a focused, interactive visual answer.
 
+## 💡 Philosophy
+
+Most code visualization tools draw the **entire** repo at once — producing an unreadable mess for large projects. AI Code Map takes a different approach:
+
+1. **Question-driven**: You ask "how does auth work?" — not "show me everything"
+2. **Incremental**: The map grows as you explore, building understanding step by step
+3. **Two layers**: Structure (map) and behavior (trace) are separate concerns
+4. **Visual**: Output is interactive images, not walls of text
+
 ## ✨ Features
 
 ### 🗺️ Map Mode — Code Structure
@@ -26,28 +35,63 @@ An interactive code visualization tool that helps you **understand large codebas
 
 ## 🚀 Quick Start
 
-```bash
-cd web
-npm install
-npm run dev
-```
+1. **Clone this repo**
+   ```bash
+   git clone https://github.com/freedom-git/ai-code-map.git
+   cd ai-code-map
+   ```
 
-Open http://localhost:5173/ — toggle between Map and Trace modes using the buttons in the top-right corner.
+2. **Open with an AI coding agent** (any of these):
+   ```bash
+   copilot          # GitHub Copilot CLI
+   claude           # Claude Code
+   opencode         # OpenCode
+   ```
+
+3. **Tell the agent which repo you want to understand**
+   ```
+   I want to understand the repo at C:\path\to\my-project
+   ```
+
+4. **Ask the agent to start the viewer**
+   ```
+   Start the web server
+   ```
+   Then open http://localhost:5173/
+
+5. **Ask questions about the code**
+   ```
+   Show me the class structure for the auth module
+   Trace the call flow when GET /api/users is called
+   ```
 
 ## 📁 Project Structure
 
 ```
-web/
-  public/
-    map.json                 # Persistent code structure map
-    traces/
-      startup.json           # Example: app startup call flow
+web/                             # React Flow viewer app
   src/
-    App.tsx                  # React Flow viewer with UML nodes
-AGENTS.md                    # Rules for AI-generated diagrams
+    App.tsx                      # Main viewer with UML nodes
+  vite.config.ts                 # Dev server + projects/ file serving
+projects/                        # .gitignored — user data per repo
+  {repo-name}/
+    project.json                 # Project config (repo path, name)
+    map.json                     # Persistent code structure map
+    traces/
+      {name}.json                # Named call flow traces
+AGENTS.md                        # Rules for AI-generated diagrams
 ```
 
 ## 📐 Data Format
+
+### project.json
+
+```json
+{
+  "name": "my-project",
+  "repoPath": "C:\\path\\to\\repo",
+  "description": "Short description of the project"
+}
+```
 
 ### map.json
 
@@ -104,15 +148,6 @@ AGENTS.md                    # Rules for AI-generated diagrams
 - **Dagre** — automatic hierarchical layout
 - **Vite + React + TypeScript** — fast dev experience
 - **AI (Copilot CLI)** — code analysis and JSON generation
-
-## 💡 Philosophy
-
-Most code visualization tools draw the **entire** repo at once — producing an unreadable mess for large projects. AI Code Map takes a different approach:
-
-1. **Question-driven**: You ask "how does auth work?" — not "show me everything"
-2. **Incremental**: The map grows as you explore, building understanding step by step
-3. **Two layers**: Structure (map) and behavior (trace) are separate concerns
-4. **Visual**: Output is interactive images, not walls of text
 
 ---
 
