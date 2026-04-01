@@ -6,6 +6,7 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   Handle,
   Position,
   MarkerType,
@@ -272,7 +273,6 @@ function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
 
 function recalcFolderBounds(nodes: Node[]): Node[] {
   const padding = 50;
-  const titleHeight = 36;
 
   // Group children by parentId
   const childrenOf = new Map<string, Node[]>();
@@ -506,6 +506,7 @@ interface ProjectConfig {
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const { fitView } = useReactFlow();
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
   const [traceInfo, setTraceInfo] = useState<TraceData | null>(null);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
@@ -630,6 +631,10 @@ export default function App() {
     }
   }, []);
 
+  const focusNode = useCallback((nodeId: string) => {
+    fitView({ nodes: [{ id: nodeId }], duration: 500, padding: 0.3 });
+  }, [fitView]);
+
   const sidebarWidth = traceInfo ? 320 : 0;
 
   // No project found — show setup instructions
@@ -689,8 +694,10 @@ export default function App() {
               <div key={step.step} style={{
                 display: 'flex', gap: 10, padding: '10px 16px',
                 borderBottom: '1px solid #1f2937',
-                cursor: 'default',
-              }}>
+                cursor: 'pointer',
+              }}
+              onClick={() => focusNode(step.nodeId)}
+            >
                 {/* Step number */}
                 <div style={{
                   width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
