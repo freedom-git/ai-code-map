@@ -152,7 +152,7 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
       <div style={{ padding: '6px 10px', color: '#e2e8f0' }}>
         {(data.methods ?? []).map((m, i) => {
           // Find all trace hits that match this method
-          const methodName = m.split('(')[0]?.split('.').pop()?.replace(/^\+\s*/, '');
+          const methodName = m.split('(')[0]?.split('.').pop()?.replace(/^[+\-#~]\s*/, '').trim();
           const hits = (data.traceHits ?? []).filter((h) => {
             const hitMethod = h.method.split('(')[0]?.split('.').pop();
             return hitMethod && methodName && methodName === hitMethod;
