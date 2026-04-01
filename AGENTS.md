@@ -15,14 +15,16 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
 3. **Only show public members.** Do not include private/protected/internal members.
 4. **Keep method signatures concise.** Use short parameter names, omit attributes like `[HttpGet]` from the method list.
 
-### Edge Rules
-1. **All edges have directional arrows** (arrowhead at target end).
-2. **`type: "inherits"`** — child → parent direction, dashed green line with triangle arrow
-3. **`type: "implements"`** — class → interface direction, dashed green line with triangle arrow
-4. **`type: "call"`** — caller → callee direction, amber animated line with closed arrow
-5. **`type: "uses"`** — dependent → dependency direction, gray dashed line with arrow
-6. Always include a `label` describing the relationship.
-7. **Direction convention**: `source` is the origin (child/caller/dependent), `target` is the destination (parent/callee/dependency).
+### Edge Rules (UML-Compliant)
+1. **All edges have directional arrows following UML standards.**
+2. **`type: "inherits"`** (Generalization) — solid green line + **hollow triangle** ——▷, child → parent
+3. **`type: "implements"`** (Realization) — dashed blue line + **hollow triangle** --▷, class → interface
+4. **`type: "uses"`** (Dependency) — dashed gray line + **open arrowhead** -->, dependent → dependency
+5. **`type: "call"`** (Association) — solid amber line + **filled arrowhead** ——▶, caller → callee (animated)
+6. **`type: "composition"`** — solid purple line + **filled diamond** ——◆, whole → part (part can't exist without whole)
+7. **`type: "aggregation"`** — solid purple line + **hollow diamond** ——◇, whole → part (part can exist independently)
+8. Always include a `label` describing the relationship.
+9. **Direction convention**: `source` is the origin (child/caller/dependent/whole), `target` is the destination (parent/callee/dependency/part).
 
 ### Scope Rules
 1. **Question-driven.** Only show classes relevant to the user's question — not the entire repo.
