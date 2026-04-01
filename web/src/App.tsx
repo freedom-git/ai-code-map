@@ -59,7 +59,7 @@ interface MapNode {
 interface MapData {
   nodes: MapNode[];
   edges: { source: string; target: string; label?: string; type?: string }[];
-  folders?: { id: string; label: string }[];
+  folders?: { id: string; label: string; x?: number; y?: number }[];
 }
 
 interface TraceStep {
@@ -205,7 +205,6 @@ async function savePositions(
 ): Promise<void> {
   const positions: PositionMap = {};
   for (const n of nodes) {
-    if (n.type === 'folder') continue;
     positions[n.id] = { x: n.position.x, y: n.position.y };
   }
   try {
@@ -234,6 +233,12 @@ function loadPositionsFromMap(mapData: MapData): PositionMap | null {
       found = true;
     }
   }
+  for (const f of mapData.folders ?? []) {
+    if (f.x != null && f.y != null) {
+      positions[f.id] = { x: f.x, y: f.y };
+      found = true;
+    }
+  }
   return found ? positions : null;
 }
 
@@ -244,7 +249,7 @@ function loadPositionsFromTrace(traceData: TraceData): PositionMap | null {
 function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
   return nodes.map((n) => {
     const pos = saved[n.id];
-    if (pos && n.type !== 'folder') {
+    if (pos) {
       return { ...n, position: { x: pos.x, y: pos.y } };
     }
     return n;
@@ -456,6 +461,8 @@ export default function App() {
   const [traceFiles, setTraceFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [clicked, setClicked] = useState<string | null>(null);
+  const [reloadCounter, setReloadCounter] = useState(0);
+  const skipSaveRef = useRef(false);
   const prevViewRef = useRef<{ project: string | null; trace: string | null }>({ project: null, trace: null });
   const nodesRef = useRef<Node[]>([]);
 
@@ -487,11 +494,12 @@ export default function App() {
   useEffect(() => {
     if (!activeProject) return;
 
-    // Save positions of the previous view before switching
+    // Save positions of the previous view before switching (skip on reset)
     const prev = prevViewRef.current;
-    if (prev.project && nodesRef.current.length > 0) {
+    if (!skipSaveRef.current && prev.project && nodesRef.current.length > 0) {
       savePositions(prev.project, prev.trace, nodesRef.current);
     }
+    skipSaveRef.current = false;
 
     const loadData = async () => {
       try {
@@ -515,12 +523,13 @@ export default function App() {
         setError(null);
         let { nodes: newNodes, edges } = layoutGraph(mapData, traceData);
 
-        // Restore saved positions from map.json or trace file
-        const saved = activeTrace && traceData
-          ? loadPositionsFromTrace(traceData)
-          : loadPositionsFromMap(mapData);
-        if (saved) {
-          newNodes = applyPositions(newNodes, saved);
+        // Restore saved positions — use trace positions if available, fall back to map
+        const mapPositions = loadPositionsFromMap(mapData);
+        const tracePositions = activeTrace && traceData ? loadPositionsFromTrace(traceData) : null;
+        if (tracePositions) {
+          newNodes = applyPositions(newNodes, tracePositions);
+        } else if (mapPositions) {
+          newNodes = applyPositions(newNodes, mapPositions);
         }
 
         setNodes(newNodes);
@@ -534,15 +543,28 @@ export default function App() {
       }
     };
     loadData();
-  }, [activeProject, activeTrace]);
+  }, [activeProject, activeTrace, reloadCounter]);
 
-  const onNodeDragStop = useCallback((_event: React.MouseEvent, node: Node) => {
-    nodesRef.current = nodesRef.current.map(n =>
-      n.id === node.id ? { ...n, position: node.position } : n
-    );
-    if (activeProject) {
-      savePositions(activeProject, activeTrace, nodesRef.current);
-    }
+  const onNodeDragStop = useCallback(() => {
+    // Read latest node state after drag (includes folder + child position updates)
+    setNodes((current) => {
+      nodesRef.current = current;
+      if (activeProject) {
+        savePositions(activeProject, activeTrace, current);
+      }
+      return current;
+    });
+  }, [activeProject, activeTrace, setNodes]);
+
+  const resetTracePositions = useCallback(async () => {
+    if (!activeProject || !activeTrace) return;
+    try {
+      await fetch(`/api/save-positions/${activeProject}/trace/${activeTrace}`, {
+        method: 'DELETE',
+      });
+      skipSaveRef.current = true;
+      setReloadCounter(c => c + 1);
+    } catch { /* ignore */ }
   }, [activeProject, activeTrace]);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
@@ -643,8 +665,18 @@ export default function App() {
             ))}
           </div>
 
-          {/* Close button */}
-          <div style={{ padding: '12px 16px' }}>
+          {/* Buttons */}
+          <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button
+              onClick={resetTracePositions}
+              style={{
+                width: '100%', padding: '8px', borderRadius: 6,
+                border: '1px solid #374151', background: '#1f2937',
+                color: '#9ca3af', cursor: 'pointer', fontSize: 12,
+              }}
+            >
+              ↺ Reset Positions
+            </button>
             <button
               onClick={() => setActiveTrace(null)}
               style={{
