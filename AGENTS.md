@@ -16,11 +16,13 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
 4. **Keep method signatures concise.** Use short parameter names, omit attributes like `[HttpGet]` from the method list.
 
 ### Edge Rules
-1. **`type: "inherits"`** — for class inheritance (rendered as dashed green line)
-2. **`type: "implements"`** — for interface implementation
-3. **`type: "call"`** — for method calls / dependencies (rendered as animated line)
-4. **`type: "uses"`** — for loose coupling / dependency injection
-5. Always include a `label` describing the relationship.
+1. **All edges have directional arrows** (arrowhead at target end).
+2. **`type: "inherits"`** — child → parent direction, dashed green line with triangle arrow
+3. **`type: "implements"`** — class → interface direction, dashed green line with triangle arrow
+4. **`type: "call"`** — caller → callee direction, amber animated line with closed arrow
+5. **`type: "uses"`** — dependent → dependency direction, gray dashed line with arrow
+6. Always include a `label` describing the relationship.
+7. **Direction convention**: `source` is the origin (child/caller/dependent), `target` is the destination (parent/callee/dependency).
 
 ### Scope Rules
 1. **Question-driven.** Only show classes relevant to the user's question — not the entire repo.
