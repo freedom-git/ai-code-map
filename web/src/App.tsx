@@ -118,15 +118,29 @@ function FolderNode({ data }: NodeProps<Node<FolderNodeData>>) {
 function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
   const colors = GROUP_COLORS[data.group ?? ''] ?? GROUP_COLORS.base;
   const isTraced = data.traceStep != null;
+  const isStart = data.traceStep === 1;
   return (
     <div style={{
       background: '#1e293b',
       border: isTraced ? '3px solid #ef4444' : `2px solid ${colors.border}`,
       borderRadius: 6, minWidth: 280, fontFamily: 'monospace', fontSize: 12,
-      overflow: 'hidden', position: 'relative',
+      overflow: 'visible', position: 'relative',
       boxShadow: isTraced ? '0 0 16px rgba(239,68,68,0.4)' : undefined,
     }}>
       <Handle type="target" position={Position.Top} style={{ background: colors.header }} />
+
+      {/* START badge for trace step 1 */}
+      {isStart && (
+        <div style={{
+          position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)',
+          background: '#ef4444', color: '#fff', padding: '2px 12px',
+          borderRadius: 4, fontSize: 11, fontWeight: 800, letterSpacing: 1,
+          whiteSpace: 'nowrap', fontFamily: 'sans-serif',
+          boxShadow: '0 2px 8px rgba(239,68,68,0.5)',
+        }}>
+          🚀 START
+        </div>
+      )}
 
       {/* Header */}
       <div style={{
