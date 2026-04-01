@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -18,15 +18,22 @@ import Dagre from 'dagre';
 
 //  Types 
 
+interface TraceHit {
+  step: number;
+  method: string;
+}
+
 interface UmlNodeData {
   className: string;
   stereotype?: string;
   attributes?: string[];
   methods?: string[];
+  
   group?: string;
   filePath?: string;
   traceStep?: number;
   traceMethod?: string;
+  traceHits?: TraceHit[];
   traceDesc?: string;
   [key: string]: unknown;
 }
@@ -139,18 +146,23 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
       {/* Methods */}
       <div style={{ padding: '6px 10px', color: '#e2e8f0' }}>
         {(data.methods ?? []).map((m, i) => {
-          const isTarget = isTraced && data.traceMethod && m.includes(data.traceMethod);
+          // Find all trace hits that match this method
+          const methodName = m.split('(')[0]?.split('.').pop()?.replace(/^\+\s*/, '');
+          const hits = (data.traceHits ?? []).filter((h) => {
+            const hitMethod = h.method.split('(')[0]?.split('.').pop();
+            return hitMethod && methodName && m.includes(hitMethod);
+          });
           return (
             <div key={i} style={{
               display: 'flex', alignItems: 'center', gap: 6,
             }}>
-              {isTarget && (
+              {hits.length > 0 && (
                 <span style={{
                   color: '#ef4444',
                   fontWeight: 900, fontSize: 13, fontFamily: 'sans-serif',
                   flexShrink: 0,
                 }}>
-                  {data.traceStep}
+                  {hits.map((h) => h.step).join(',')}
                 </span>
               )}
               <span>{m}</span>
@@ -177,7 +189,43 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
 
 const nodeTypes = { uml: UmlNode, folder: FolderNode };
 
-//  Layout 
+//  Position Persistence
+
+type PositionMap = Record<string, { x: number; y: number }>;
+
+function positionKey(projectId: string, traceName: string | null): string {
+  return `node-positions:${projectId}:${traceName ?? '__map__'}`;
+}
+
+function savePositions(key: string, nodes: Node[]): void {
+  const positions: PositionMap = {};
+  for (const n of nodes) {
+    positions[n.id] = { x: n.position.x, y: n.position.y };
+  }
+  try {
+    localStorage.setItem(key, JSON.stringify(positions));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function loadPositions(key: string): PositionMap | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return JSON.parse(raw);
+  } catch { /* corrupted — ignore */ }
+  return null;
+}
+
+function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
+  return nodes.map((n) => {
+    const pos = saved[n.id];
+    if (pos && n.type !== 'folder') {
+      return { ...n, position: { x: pos.x, y: pos.y } };
+    }
+    return n;
+  });
+}
+
+//  Layout
 
 function layoutGraph(
   mapData: MapData,
@@ -186,11 +234,12 @@ function layoutGraph(
   const g = new Dagre.graphlib.Graph({ compound: true }).setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 120 });
 
-  // Build trace lookup
-  const traceStepMap = new Map<string, TraceStep>();
+  // Build trace lookup — collect ALL steps per node (a node may appear multiple times)
+  const traceHitsMap = new Map<string, TraceHit[]>();
   if (traceData) {
     for (const s of traceData.steps) {
-      traceStepMap.set(s.nodeId, s);
+      if (!traceHitsMap.has(s.nodeId)) traceHitsMap.set(s.nodeId, []);
+      traceHitsMap.get(s.nodeId)!.push({ step: s.step, method: s.method });
     }
   }
 
@@ -211,7 +260,7 @@ function layoutGraph(
   for (const n of mapData.nodes) {
     const methodCount = (n.methods ?? []).length;
     const attrCount = (n.attributes ?? []).length;
-    const hasTrace = traceStepMap.has(n.id);
+    const hasTrace = traceHitsMap.has(n.id);
     const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18
       + (n.filePath ? 24 : 0) + (hasTrace ? 24 : 0);
     g.setNode(n.id, { width: 340, height });
@@ -280,7 +329,7 @@ function layoutGraph(
       x = pos.x - 170 - (minX - paddingX);
       y = pos.y - (minY - paddingY - titleHeight);
     }
-    const traceStep = traceStepMap.get(n.id);
+    const traceHits = traceHitsMap.get(n.id);
     nodes.push({
       id: n.id,
       type: 'uml',
@@ -293,8 +342,9 @@ function layoutGraph(
         methods: n.methods,
         group: n.group,
         filePath: n.filePath,
-        traceStep: traceStep?.step,
-        traceMethod: traceStep?.method?.split('(')[0]?.split('.').pop(),
+        traceStep: traceHits?.[0]?.step,
+        traceMethod: traceHits?.[0]?.method?.split('(')[0]?.split('.').pop(),
+        traceHits: traceHits ?? [],
       },
     });
   }
@@ -332,11 +382,12 @@ function layoutGraph(
     };
   });
 
-  // Trace edges (numbered call flow)
+  // Trace edges (numbered call flow) — skip self-loops (same node), numbers show inline
   if (traceData) {
     for (let i = 0; i < traceData.steps.length - 1; i++) {
       const from = traceData.steps[i];
       const to = traceData.steps[i + 1];
+      if (from.nodeId === to.nodeId) continue;
       edges.push({
         id: `trace-e-${i}`,
         source: from.nodeId,
@@ -379,6 +430,8 @@ export default function App() {
   const [traceFiles, setTraceFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [clicked, setClicked] = useState<string | null>(null);
+  const prevViewRef = useRef<{ project: string | null; trace: string | null }>({ project: null, trace: null });
+  const nodesRef = useRef<Node[]>([]);
 
   // Load available projects
   useEffect(() => {
@@ -407,6 +460,14 @@ export default function App() {
   // Load map + optional trace
   useEffect(() => {
     if (!activeProject) return;
+
+    // Save positions of the previous view before switching
+    const prev = prevViewRef.current;
+    if (prev.project && nodesRef.current.length > 0) {
+      const key = positionKey(prev.project, prev.trace);
+      savePositions(key, nodesRef.current);
+    }
+
     const loadData = async () => {
       try {
         const mapRes = await fetch(`/projects/${activeProject}/map.json`);
@@ -427,15 +488,44 @@ export default function App() {
         }
 
         setError(null);
-        const { nodes, edges } = layoutGraph(mapData, traceData);
-        setNodes(nodes);
+        let { nodes: newNodes, edges } = layoutGraph(mapData, traceData);
+
+        // Restore saved positions if available
+        const key = positionKey(activeProject, activeTrace);
+        const saved = loadPositions(key);
+        if (saved) {
+          newNodes = applyPositions(newNodes, saved);
+        }
+
+        setNodes(newNodes);
         setEdges(edges);
+        nodesRef.current = newNodes;
+
+        // Track current view for next switch
+        prevViewRef.current = { project: activeProject, trace: activeTrace };
       } catch {
         setError('no-map');
       }
     };
     loadData();
   }, [activeProject, activeTrace]);
+
+  const handleNodesChange: typeof onNodesChange = useCallback((changes) => {
+    onNodesChange(changes);
+    // Update ref after position changes (drag end)
+    const hasPositionChange = changes.some((c) => c.type === 'position' && c.dragging === false);
+    if (hasPositionChange) {
+      // setNodes triggers a re-render; read latest from state via functional update
+      setNodes((current) => {
+        nodesRef.current = current;
+        // Save immediately on drag end
+        if (activeProject) {
+          savePositions(positionKey(activeProject, activeTrace), current);
+        }
+        return current;
+      });
+    }
+  }, [onNodesChange, setNodes, activeProject, activeTrace]);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     if (node.type === 'uml') {
@@ -612,7 +702,7 @@ export default function App() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
