@@ -26,6 +26,11 @@ interface UmlNodeData {
   [key: string]: unknown;
 }
 
+interface FolderNodeData {
+  label: string;
+  [key: string]: unknown;
+}
+
 interface GraphData {
   nodes: {
     id: string;
@@ -35,15 +40,46 @@ interface GraphData {
     methods?: string[];
     group?: string;
     filePath?: string;
+    folder?: string;
   }[];
   edges: { source: string; target: string; label?: string; type?: string }[];
+  folders?: { id: string; label: string }[];
 }
 
 const GROUP_COLORS: Record<string, { header: string; border: string }> = {
   controller: { header: '#3b82f6', border: '#2563eb' },
   infrastructure: { header: '#f59e0b', border: '#d97706' },
   base: { header: '#6b7280', border: '#4b5563' },
+  service: { header: '#10b981', border: '#059669' },
+  model: { header: '#8b5cf6', border: '#7c3aed' },
+  repository: { header: '#14b8a6', border: '#0d9488' },
 };
+
+const FOLDER_COLORS = [
+  { bg: 'rgba(59,130,246,0.08)', border: '#2563eb' },
+  { bg: 'rgba(16,185,129,0.08)', border: '#059669' },
+  { bg: 'rgba(245,158,11,0.08)', border: '#d97706' },
+  { bg: 'rgba(139,92,246,0.08)', border: '#7c3aed' },
+  { bg: 'rgba(20,184,166,0.08)', border: '#0d9488' },
+];
+
+function FolderNode({ data }: NodeProps<Node<FolderNodeData>>) {
+  return (
+    <div style={{
+      width: '100%', height: '100%', position: 'relative',
+      pointerEvents: 'none',
+    }}>
+      <div style={{
+        position: 'absolute', top: 8, left: 12,
+        color: '#94a3b8', padding: '4px 12px',
+        fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
+        whiteSpace: 'nowrap', pointerEvents: 'auto',
+      }}>
+        📂 {data.label}
+      </div>
+    </div>
+  );
+}
 
 function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
   const colors = GROUP_COLORS[data.group ?? ''] ?? GROUP_COLORS.base;
@@ -87,7 +123,7 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
           color: '#64748b', fontSize: 10, fontStyle: 'italic',
           textAlign: 'center', wordBreak: 'break-all',
         }}>
-          📁 {data.filePath}
+          📁 {data.filePath.split('/').pop()}
         </div>
       )}
 
@@ -96,27 +132,119 @@ function UmlNode({ data }: NodeProps<Node<UmlNodeData>>) {
   );
 }
 
-const nodeTypes = { uml: UmlNode };
+const nodeTypes = { uml: UmlNode, folder: FolderNode };
 
 function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
-  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
+  const g = new Dagre.graphlib.Graph({ compound: true }).setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 120 });
 
-  data.nodes.forEach((n) => {
+  // Group nodes by folder
+  const folderMap = new Map<string, typeof data.nodes>();
+  const noFolder: typeof data.nodes = [];
+  for (const n of data.nodes) {
+    if (n.folder) {
+      if (!folderMap.has(n.folder)) folderMap.set(n.folder, []);
+      folderMap.get(n.folder)!.push(n);
+    } else {
+      noFolder.push(n);
+    }
+  }
+
+  // Register folder groups in dagre
+  const folders = data.folders ?? [];
+  for (const f of folders) {
+    g.setNode(f.id, { width: 1, height: 1 });
+  }
+
+  // Register all class nodes
+  for (const n of data.nodes) {
     const methodCount = (n.methods ?? []).length;
     const attrCount = (n.attributes ?? []).length;
-    const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18;
-    g.setNode(n.id, { width: 320, height });
-  });
+    const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18 + (n.filePath ? 24 : 0);
+    g.setNode(n.id, { width: 340, height });
+    if (n.folder) {
+      g.setParent(n.id, n.folder);
+    }
+  }
+
   data.edges.forEach((e) => g.setEdge(e.source, e.target));
   Dagre.layout(g);
 
-  const nodes: Node[] = data.nodes.map((n) => {
+  const nodes: Node[] = [];
+
+  // Create folder container nodes
+  for (const f of folders) {
+    const children = folderMap.get(f.id) ?? [];
+    if (children.length === 0) continue;
+
+    // Calculate bounding box from children
+    const paddingX = 50;
+    const paddingY = 40;
+    const titleHeight = 36;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of children) {
+      const pos = g.node(c.id);
+      const nodeInfo = g.node(c.id);
+      minX = Math.min(minX, pos.x - nodeInfo.width / 2);
+      minY = Math.min(minY, pos.y - nodeInfo.height / 2);
+      maxX = Math.max(maxX, pos.x + nodeInfo.width / 2);
+      maxY = Math.max(maxY, pos.y + nodeInfo.height / 2);
+    }
+
+    // Ensure folder is at least as wide as the label
+    const labelWidth = f.label.length * 8 + 60;
+    const contentWidth = maxX - minX + paddingX * 2;
+    const folderWidth = Math.max(contentWidth, labelWidth);
+
+    const folderIdx = folders.indexOf(f) % FOLDER_COLORS.length;
+    const fc = FOLDER_COLORS[folderIdx];
+
+    nodes.push({
+      id: f.id,
+      type: 'folder',
+      position: { x: minX - paddingX, y: minY - paddingY - titleHeight },
+      zIndex: -1,
+      data: { label: f.label },
+      style: {
+        width: Math.max(folderWidth, 400),
+        height: Math.max(maxY - minY + paddingY * 2 + titleHeight, 100),
+        background: fc.bg,
+        border: `2px dashed ${fc.border}`,
+        borderRadius: 12,
+        padding: 0,
+      },
+    });
+  }
+
+  // Create class nodes
+  for (const n of data.nodes) {
     const pos = g.node(n.id);
-    return {
+    const folder = folders.find((f) => f.id === n.folder);
+    let x = pos.x - 170;
+    let y = pos.y;
+
+    // If in a folder, make position relative to folder container
+    if (folder) {
+      const children = folderMap.get(folder.id) ?? [];
+      const paddingX = 50;
+      const paddingY = 40;
+      const titleHeight = 36;
+      let minX = Infinity, minY = Infinity;
+      for (const c of children) {
+        const cp = g.node(c.id);
+        const ci = g.node(c.id);
+        minX = Math.min(minX, cp.x - ci.width / 2);
+        minY = Math.min(minY, cp.y - ci.height / 2);
+      }
+      x = pos.x - 170 - (minX - paddingX);
+      y = pos.y - (minY - paddingY - titleHeight);
+    }
+
+    nodes.push({
       id: n.id,
       type: 'uml',
-      position: { x: pos.x - 160, y: pos.y },
+      position: { x, y },
+      ...(n.folder ? { parentId: n.folder, expandParent: true } : {}),
       data: {
         className: n.className,
         stereotype: n.stereotype,
@@ -125,16 +253,10 @@ function layoutGraph(data: GraphData): { nodes: Node[]; edges: Edge[] } {
         group: n.group,
         filePath: n.filePath,
       },
-    };
-  });
+    });
+  }
 
-  // UML-compliant edge styles
-  // Generalization (extends):  solid line, NO arrow             ——
-  // Realization (implements):  dashed line + arrow              --▷
-  // Dependency (uses):         dashed line + arrow              -->
-  // Association (call):        solid line + filled arrow        ——▶
-  // Composition:               solid line + filled arrow        ——▶
-  // Aggregation:               solid line + arrow               ——▷
+  // Edge styles
   const EDGE_STYLES: Record<string, {
     stroke: string; dash?: string; animated?: boolean;
     markerType?: MarkerType;
@@ -184,7 +306,9 @@ export default function App() {
   }, []);
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setClicked(`${(node.data as UmlNodeData).className}`);
+    if (node.type === 'uml') {
+      setClicked(`${(node.data as UmlNodeData).className}`);
+    }
   }, []);
 
   return (

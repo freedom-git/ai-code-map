@@ -13,7 +13,7 @@ When generating `graph.json` for the React Flow viewer, follow these rules:
    - `stereotype`: e.g., `Controller`, `Abstract`, `Static`, `Interface`, `Service`, `Repository`
    - `attributes`: List of public properties/fields with types (e.g., `"EndpointName: string {abstract}"`)
    - `methods`: List of public methods with return types (e.g., `"GetVersionsAsync(): Task<IActionResult>"`)
-   - `filePath`: Relative path to the source file from repo root (e.g., `"Components/ModelEndpoints/.../Controllers/MyController.cs"`)
+   - `filePath`: Relative path to the source file from repo root. **Always use full paths, never abbreviate with `...`** (e.g., `"Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/Controllers/MyController.cs"`)
    - `group`: Category for color coding (`controller`, `infrastructure`, `base`, `service`, `model`, `repository`)
 3. **Only show public members.** Do not include private/protected/internal members.
 4. **Keep method signatures concise.** Use short parameter names, omit attributes like `[HttpGet]` from the method list.
