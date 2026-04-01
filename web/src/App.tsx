@@ -193,26 +193,40 @@ const nodeTypes = { uml: UmlNode, folder: FolderNode };
 
 type PositionMap = Record<string, { x: number; y: number }>;
 
-function positionKey(projectId: string, traceName: string | null): string {
-  return `node-positions:${projectId}:${traceName ?? '__map__'}`;
-}
-
-function savePositions(key: string, nodes: Node[]): void {
-  const positions: PositionMap = {};
+async function savePositions(projectId: string, traceName: string | null, nodes: Node[]): Promise<void> {
+  const positions: Record<string, PositionMap> = {};
+  const viewKey = traceName ?? '__map__';
+  // Load existing positions file to preserve other views
+  try {
+    const res = await fetch(`/api/positions/${projectId}`);
+    if (res.ok) {
+      const existing = await res.json();
+      Object.assign(positions, existing);
+    }
+  } catch { /* ignore */ }
+  // Update positions for this view
+  const viewPositions: PositionMap = {};
   for (const n of nodes) {
-    positions[n.id] = { x: n.position.x, y: n.position.y };
+    viewPositions[n.id] = { x: n.position.x, y: n.position.y };
   }
+  positions[viewKey] = viewPositions;
   try {
-    localStorage.setItem(key, JSON.stringify(positions));
-  } catch { /* quota exceeded — ignore */ }
+    await fetch(`/api/positions/${projectId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(positions),
+    });
+  } catch { /* ignore */ }
 }
 
-function loadPositions(key: string): PositionMap | null {
+async function loadPositions(projectId: string, traceName: string | null): Promise<PositionMap | null> {
   try {
-    const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
-  } catch { /* corrupted — ignore */ }
-  return null;
+    const res = await fetch(`/api/positions/${projectId}`);
+    if (!res.ok) return null;
+    const all = await res.json();
+    const viewKey = traceName ?? '__map__';
+    return all[viewKey] ?? null;
+  } catch { return null; }
 }
 
 function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
@@ -464,8 +478,7 @@ export default function App() {
     // Save positions of the previous view before switching
     const prev = prevViewRef.current;
     if (prev.project && nodesRef.current.length > 0) {
-      const key = positionKey(prev.project, prev.trace);
-      savePositions(key, nodesRef.current);
+      savePositions(prev.project, prev.trace, nodesRef.current);
     }
 
     const loadData = async () => {
@@ -491,8 +504,7 @@ export default function App() {
         let { nodes: newNodes, edges } = layoutGraph(mapData, traceData);
 
         // Restore saved positions if available
-        const key = positionKey(activeProject, activeTrace);
-        const saved = loadPositions(key);
+        const saved = await loadPositions(activeProject, activeTrace);
         if (saved) {
           newNodes = applyPositions(newNodes, saved);
         }
@@ -515,7 +527,7 @@ export default function App() {
       n.id === node.id ? { ...n, position: node.position } : n
     );
     if (activeProject) {
-      savePositions(positionKey(activeProject, activeTrace), nodesRef.current);
+      savePositions(activeProject, activeTrace, nodesRef.current);
     }
   }, [activeProject, activeTrace]);
 

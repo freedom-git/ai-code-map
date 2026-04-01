@@ -43,6 +43,43 @@ function serveProjects(): Plugin {
         res.end(JSON.stringify(traces));
       });
 
+      // API: save/load node positions for a project
+      server.middlewares.use('/api/positions/', (req, res, next) => {
+        const projectId = req.url?.replace(/^\//, '').replace(/\/$/, '');
+        if (!projectId) { next(); return; }
+        const posFile = path.join(projectsDir, projectId, 'positions.json');
+
+        if (req.method === 'GET') {
+          if (fs.existsSync(posFile)) {
+            res.setHeader('Content-Type', 'application/json');
+            fs.createReadStream(posFile).pipe(res);
+          } else {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({}));
+          }
+          return;
+        }
+
+        if (req.method === 'PUT') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              fs.writeFileSync(posFile, JSON.stringify(data, null, 2));
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            } catch {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            }
+          });
+          return;
+        }
+
+        next();
+      });
+
       // Serve project files
       server.middlewares.use('/projects', (req, res, next) => {
         const filePath = path.join(projectsDir, req.url ?? '');
