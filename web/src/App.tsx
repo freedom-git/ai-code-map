@@ -256,6 +256,44 @@ function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
   });
 }
 
+function recalcFolderBounds(nodes: Node[]): Node[] {
+  const padding = 50;
+  const titleHeight = 36;
+
+  // Group children by parentId
+  const childrenOf = new Map<string, Node[]>();
+  for (const n of nodes) {
+    const parentId = (n as Node & { parentId?: string }).parentId;
+    if (parentId) {
+      if (!childrenOf.has(parentId)) childrenOf.set(parentId, []);
+      childrenOf.get(parentId)!.push(n);
+    }
+  }
+
+  return nodes.map((n) => {
+    if (n.type !== 'folder') return n;
+    const children = childrenOf.get(n.id);
+    if (!children || children.length === 0) return n;
+
+    // Children positions are relative to the folder — find max extent
+    let maxRight = 0, maxBottom = 0;
+    for (const c of children) {
+      const w = (c.measured?.width ?? 340);
+      const h = (c.measured?.height ?? 150);
+      maxRight = Math.max(maxRight, c.position.x + w);
+      maxBottom = Math.max(maxBottom, c.position.y + h);
+    }
+
+    const width = maxRight + padding;
+    const height = maxBottom + padding;
+
+    return {
+      ...n,
+      style: { ...n.style, width, height },
+    };
+  });
+}
+
 //  Layout
 
 function layoutGraph(
@@ -330,8 +368,8 @@ function layoutGraph(
       zIndex: -1,
       data: { label: f.label },
       style: {
-        width: Math.max(folderWidth, 400),
-        height: Math.max(maxY - minY + paddingY * 2 + titleHeight, 100),
+        width: folderWidth,
+        height: maxY - minY + paddingY * 2 + titleHeight,
         background: fc.bg,
         border: `2px dashed ${fc.border}`,
         borderRadius: 12,
@@ -531,6 +569,7 @@ export default function App() {
         } else if (mapPositions) {
           newNodes = applyPositions(newNodes, mapPositions);
         }
+        newNodes = recalcFolderBounds(newNodes);
 
         setNodes(newNodes);
         setEdges(edges);
@@ -758,6 +797,7 @@ export default function App() {
           onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
+          minZoom={0.1}
           colorMode="dark"
         >
           <Background />
