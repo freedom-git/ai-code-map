@@ -67,6 +67,28 @@
    追踪 GET /api/users 被调用时的调用链
    ```
 
+## 🔌 注册为 Skill（可选）
+
+把本仓库注册到 Claude Code 和 / 或 GitHub Copilot CLI，让它们自动识别为一个 skill：
+
+```bash
+# 注册 —— 在 ~/.claude/skills/code-insight 与 ~/.copilot/skills/code-insight 创建符号链接
+node scripts/register.mjs
+
+# 取消注册
+node scripts/unregister.mjs
+```
+
+两个脚本都是纯 Node 实现（零依赖，无需 `npm install`），可在 Windows、macOS、Linux 上运行。在 Windows 上使用目录联接（junction），无需管理员权限或开发者模式。
+
+常用参数：
+
+- `--target=claude|copilot|both`（默认 `both`） —— 只注册到指定 agent
+- `--force` —— 替换指向其他位置的过期链接（仅 `register.mjs` 支持）
+- `--dry-run` —— 只打印计划执行的操作，不实际修改
+
+脚本拒绝删除真实目录，也拒绝删除指向其他仓库的链接，可以放心重复执行。
+
 ## 📁 项目结构
 
 ```

@@ -65,6 +65,28 @@ Most code visualization tools draw the **entire** repo at once — producing an 
    Trace the call flow when GET /api/users is called
    ```
 
+## 🔌 Install as a Skill (optional)
+
+Register this repo with Claude Code and/or GitHub Copilot CLI so they pick it up automatically as a skill:
+
+```bash
+# Register — creates symlinks at ~/.claude/skills/code-insight and ~/.copilot/skills/code-insight
+node scripts/register.mjs
+
+# Remove the registration
+node scripts/unregister.mjs
+```
+
+Both scripts are pure Node (no dependencies, no `npm install` required) and work on Windows, macOS, and Linux. On Windows they use directory junctions, so no admin / Developer Mode is needed.
+
+Useful flags:
+
+- `--target=claude|copilot|both` (default `both`) — register only one agent
+- `--force` — replace a stale link that points elsewhere (`register.mjs` only)
+- `--dry-run` — print the actions without making changes
+
+The scripts refuse to delete real directories or symlinks pointing somewhere other than this repo, so they are safe to re-run.
+
 ## 📁 Project Structure
 
 ```
