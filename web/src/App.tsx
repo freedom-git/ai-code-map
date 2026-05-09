@@ -627,15 +627,21 @@ export default function App() {
   const skipSaveRef = useRef(false);
   const prevViewRef = useRef<{ project: string | null; trace: string | null }>({ project: null, trace: null });
   const nodesRef = useRef<Node[]>([]);
+  // Tracks which project's trace state has been restored from localStorage. Used to
+  // suppress the "persist trace" effect from firing with the previous project's trace
+  // value during a project switch (before the trace-list effect resolves).
+  const loadedProjectRef = useRef<string | null>(null);
 
-  // Load available projects
+  // Load available projects (restoring last selection from localStorage)
   useEffect(() => {
     fetch('/api/projects')
       .then(r => r.json())
       .then((data: ProjectConfig[]) => {
         setProjects(data);
         if (data.length > 0) {
-          setActiveProject(data[0].id);
+          const saved = typeof window !== 'undefined' ? localStorage.getItem('code-insight:lastProject') : null;
+          const initial = saved && data.some(p => p.id === saved) ? saved : data[0].id;
+          setActiveProject(initial);
         } else {
           setError('no-project');
         }
@@ -643,14 +649,42 @@ export default function App() {
       .catch(() => setError('no-project'));
   }, []);
 
-  // Load traces for active project
+  // Persist active project on change
+  useEffect(() => {
+    if (activeProject) localStorage.setItem('code-insight:lastProject', activeProject);
+  }, [activeProject]);
+
+  // Load traces for active project (restoring last trace for this project from localStorage)
   useEffect(() => {
     if (!activeProject) return;
+    let cancelled = false;
     fetch(`/api/traces/${activeProject}`)
       .then(r => r.json())
-      .then((data: string[]) => setTraceFiles(data))
-      .catch(() => setTraceFiles([]));
+      .then((data: string[]) => {
+        if (cancelled) return;
+        setTraceFiles(data);
+        const savedTrace = localStorage.getItem(`code-insight:lastTrace:${activeProject}`);
+        setActiveTrace(savedTrace && data.includes(savedTrace) ? savedTrace : null);
+        loadedProjectRef.current = activeProject;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTraceFiles([]);
+        setActiveTrace(null);
+        loadedProjectRef.current = activeProject;
+      });
+    return () => { cancelled = true; };
   }, [activeProject]);
+
+  // Persist active trace per-project. Skipped while a project switch is in flight
+  // (loadedProjectRef won't match activeProject until the trace-list effect resolves),
+  // so we never accidentally write the old project's trace under the new project's key.
+  useEffect(() => {
+    if (!activeProject || loadedProjectRef.current !== activeProject) return;
+    const key = `code-insight:lastTrace:${activeProject}`;
+    if (activeTrace) localStorage.setItem(key, activeTrace);
+    else localStorage.removeItem(key);
+  }, [activeProject, activeTrace]);
 
   // Load map + optional trace
   useEffect(() => {
@@ -871,7 +905,7 @@ export default function App() {
           {projects.length > 1 && (
             <select
               value={activeProject ?? ''}
-              onChange={(e) => { setActiveProject(e.target.value); setActiveTrace(null); }}
+              onChange={(e) => setActiveProject(e.target.value)}
               style={{
                 padding: '6px 10px', borderRadius: 6, border: '1px solid #334155',
                 background: '#1e293b', color: '#e2e8f0', fontSize: 12, cursor: 'pointer',
