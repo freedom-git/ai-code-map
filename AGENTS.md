@@ -91,7 +91,7 @@ The **map** is a persistent, accumulative view of the repo's code structure.
 2. **Updateable.** Existing nodes can be updated (e.g., new methods discovered, attributes changed).
 3. **Complete over time.** The map grows gradually as we understand more of the repo. Over many sessions, it becomes a full architectural map.
 4. **Structural relationships only.** Map edges show static relationships: `inherits`, `implements`, `uses`, `composition`, `aggregation`. Not runtime call flows.
-5. **Folders as containers.** Group nodes by their folder/directory.
+5. **Folders as containers.** Group nodes by their folder/directory. Folders may be **nested** — see _Folder Nesting_ below.
 6. **File**: `projects/{repo-name}/map.json`
 
 ### Trace Mode (`trace-{name}.json`)
@@ -144,6 +144,11 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
 
 ```json
 {
+  "folders": [
+    { "id": "components", "label": "Components" },
+    { "id": "model-endpoints", "label": "ModelEndpoints", "parent": "components" },
+    { "id": "controllers", "label": "Controllers", "parent": "model-endpoints" }
+  ],
   "nodes": [
     {
       "id": "unique-id",
@@ -151,6 +156,7 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
       "stereotype": "Controller",
       "group": "controller",
       "filePath": "relative/path/to/File.cs",
+      "folder": "controllers",
       "attributes": ["PropertyName: Type"],
       "methods": ["MethodName(params): ReturnType"]
     }
@@ -165,6 +171,12 @@ A **trace** overlays a numbered call flow path on top of the map — like drawin
   ]
 }
 ```
+
+### Folder Nesting
+- A folder may declare a `parent` referencing another folder's `id`. Omit `parent` for root folders.
+- **Labels are leaf-only.** Write the short segment (`"Controllers"`), not the full path (`"Components/ModelEndpoints/Controllers"`). Nesting context comes from the parent chain.
+- A class node always references the **deepest** folder it belongs to via its single `folder` field. The viewer walks up the `parent` chain automatically.
+- Cycles and unknown parents are tolerated (treated as root) but should be avoided.
 
 ### Group Color Map
 - `controller` → blue (#3b82f6)

@@ -57,10 +57,18 @@ interface MapNode {
   y?: number;
 }
 
+interface FolderDef {
+  id: string;
+  label: string;
+  parent?: string;
+  x?: number;
+  y?: number;
+}
+
 interface MapData {
   nodes: MapNode[];
   edges: { source: string; target: string; label?: string; type?: string }[];
-  folders?: { id: string; label: string; x?: number; y?: number }[];
+  folders?: FolderDef[];
 }
 
 interface TraceStep {
@@ -274,7 +282,10 @@ function applyPositions(nodes: Node[], saved: PositionMap): Node[] {
 function recalcFolderBounds(nodes: Node[]): Node[] {
   const padding = 50;
 
-  // Group children by parentId
+  const byId = new Map<string, Node>();
+  for (const n of nodes) byId.set(n.id, n);
+
+  // Group children by direct parentId
   const childrenOf = new Map<string, Node[]>();
   for (const n of nodes) {
     const parentId = (n as Node & { parentId?: string }).parentId;
@@ -284,27 +295,60 @@ function recalcFolderBounds(nodes: Node[]): Node[] {
     }
   }
 
-  return nodes.map((n) => {
-    if (n.type !== 'folder') return n;
-    const children = childrenOf.get(n.id);
-    if (!children || children.length === 0) return n;
+  // Depth = parent-chain length, with cycle protection
+  const depthOf = (n: Node): number => {
+    let depth = 0;
+    let current: Node | undefined = n;
+    const seen = new Set<string>();
+    while (current && (current as Node & { parentId?: string }).parentId) {
+      if (seen.has(current.id)) break;
+      seen.add(current.id);
+      const pid = (current as Node & { parentId?: string }).parentId!;
+      const parent = byId.get(pid);
+      if (!parent) break;
+      depth++;
+      current = parent;
+      if (depth > 100) break;
+    }
+    return depth;
+  };
 
-    // Children positions are relative to the folder — find max extent
-    let maxRight = 0, maxBottom = 0;
+  // Process folders deepest-first so a parent reads its child folder's
+  // already-recomputed size when computing its own bounds.
+  const folders = nodes.filter((n) => n.type === 'folder');
+  folders.sort((a, b) => depthOf(b) - depthOf(a));
+
+  const updatedSizes = new Map<string, { width: number; height: number }>();
+
+  for (const f of folders) {
+    const children = childrenOf.get(f.id);
+    if (!children || children.length === 0) continue;
+    let maxRight = 0;
+    let maxBottom = 0;
     for (const c of children) {
-      const w = (c.measured?.width ?? 340);
-      const h = (c.measured?.height ?? 150);
+      let w: number;
+      let h: number;
+      if (c.type === 'folder') {
+        const updated = updatedSizes.get(c.id);
+        const styleW = typeof c.style?.width === 'number' ? c.style.width : 0;
+        const styleH = typeof c.style?.height === 'number' ? c.style.height : 0;
+        w = updated?.width ?? styleW;
+        h = updated?.height ?? styleH;
+      } else {
+        w = c.measured?.width ?? 340;
+        h = c.measured?.height ?? 150;
+      }
       maxRight = Math.max(maxRight, c.position.x + w);
       maxBottom = Math.max(maxBottom, c.position.y + h);
     }
+    updatedSizes.set(f.id, { width: maxRight + padding, height: maxBottom + padding });
+  }
 
-    const width = maxRight + padding;
-    const height = maxBottom + padding;
-
-    return {
-      ...n,
-      style: { ...n.style, width, height },
-    };
+  return nodes.map((n) => {
+    if (n.type !== 'folder') return n;
+    const sz = updatedSizes.get(n.id);
+    if (!sz) return n;
+    return { ...n, style: { ...n.style, width: sz.width, height: sz.height } };
   });
 }
 
@@ -317,7 +361,7 @@ function layoutGraph(
   const g = new Dagre.graphlib.Graph({ compound: true }).setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 120 });
 
-  // Build trace lookup — collect ALL steps per node (a node may appear multiple times)
+  // Trace lookup — collect ALL steps per node (a node may appear multiple times)
   const traceHitsMap = new Map<string, TraceHit[]>();
   if (traceData) {
     for (const s of traceData.steps) {
@@ -326,18 +370,52 @@ function layoutGraph(
     }
   }
 
-  // Group nodes by folder
-  const folderMap = new Map<string, typeof mapData.nodes>();
-  for (const n of mapData.nodes) {
-    if (n.folder) {
-      if (!folderMap.has(n.folder)) folderMap.set(n.folder, []);
-      folderMap.get(n.folder)!.push(n);
+  // Folder hierarchy 
+  const folders = mapData.folders ?? [];
+  const folderById = new Map(folders.map((f) => [f.id, f] as const));
+
+  // Validate parent references and detect cycles. A folder whose parent
+  // chain contains itself or a missing id is treated as a root for safety.
+  const folderDepth = (id: string): number => {
+    let depth = 0;
+    let current = folderById.get(id);
+    const seen = new Set<string>();
+    while (current?.parent) {
+      if (seen.has(current.id)) return depth;
+      seen.add(current.id);
+      const next = folderById.get(current.parent);
+      if (!next) break;
+      current = next;
+      depth++;
+      if (depth > 100) break;
+    }
+    return depth;
+  };
+
+  // parent folder id -> direct child folder ids
+  const childFoldersOf = new Map<string, string[]>();
+  for (const f of folders) {
+    if (f.parent && folderById.has(f.parent)) {
+      if (!childFoldersOf.has(f.parent)) childFoldersOf.set(f.parent, []);
+      childFoldersOf.get(f.parent)!.push(f.id);
     }
   }
 
-  const folders = mapData.folders ?? [];
+  // folder id -> direct class child nodes
+  const classChildrenOf = new Map<string, typeof mapData.nodes>();
+  for (const n of mapData.nodes) {
+    if (n.folder && folderById.has(n.folder)) {
+      if (!classChildrenOf.has(n.folder)) classChildrenOf.set(n.folder, []);
+      classChildrenOf.get(n.folder)!.push(n);
+    }
+  }
+
+  // Dagre setup: register every folder + every class, then wire compound parents.
   for (const f of folders) {
     g.setNode(f.id, { width: 1, height: 1 });
+  }
+  for (const f of folders) {
+    if (f.parent && folderById.has(f.parent)) g.setParent(f.id, f.parent);
   }
 
   for (const n of mapData.nodes) {
@@ -347,43 +425,88 @@ function layoutGraph(
     const height = 50 + Math.max(attrCount, 1) * 18 + methodCount * 18
       + (n.filePath ? 24 : 0) + (hasTrace ? 24 : 0);
     g.setNode(n.id, { width: 340, height });
-    if (n.folder) g.setParent(n.id, n.folder);
+    if (n.folder && folderById.has(n.folder)) g.setParent(n.id, n.folder);
   }
 
   mapData.edges.forEach((e) => g.setEdge(e.source, e.target));
   Dagre.layout(g);
 
-  const nodes: Node[] = [];
+  // Compute absolute (Dagre-space) bounds for every folder, leaves-first.
+  // A folder's children may be class nodes OR nested folder containers.
+  const paddingX = 50;
+  const paddingY = 40;
+  const titleHeight = 36;
+  type AbsBounds = { x: number; y: number; width: number; height: number };
+  const folderAbs = new Map<string, AbsBounds>();
 
-  // Folder containers
-  for (const f of folders) {
-    const children = folderMap.get(f.id) ?? [];
-    if (children.length === 0) continue;
-    const paddingX = 50;
-    const paddingY = 40;
-    const titleHeight = 36;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const c of children) {
+  const sortedFolders = [...folders].sort(
+    (a, b) => folderDepth(b.id) - folderDepth(a.id),
+  );
+
+  for (const f of sortedFolders) {
+    const classChildren = classChildrenOf.get(f.id) ?? [];
+    const childFolderIds = childFoldersOf.get(f.id) ?? [];
+    if (classChildren.length === 0 && childFolderIds.length === 0) continue;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const c of classChildren) {
       const pos = g.node(c.id);
       minX = Math.min(minX, pos.x - pos.width / 2);
       minY = Math.min(minY, pos.y - pos.height / 2);
       maxX = Math.max(maxX, pos.x + pos.width / 2);
       maxY = Math.max(maxY, pos.y + pos.height / 2);
     }
+    for (const cfId of childFolderIds) {
+      const cf = folderAbs.get(cfId);
+      if (!cf) continue;
+      minX = Math.min(minX, cf.x);
+      minY = Math.min(minY, cf.y);
+      maxX = Math.max(maxX, cf.x + cf.width);
+      maxY = Math.max(maxY, cf.y + cf.height);
+    }
+
     const labelWidth = f.label.length * 8 + 60;
     const contentWidth = maxX - minX + paddingX * 2;
     const folderWidth = Math.max(contentWidth, labelWidth);
+    const folderHeight = maxY - minY + paddingY * 2 + titleHeight;
+    folderAbs.set(f.id, {
+      x: minX - paddingX,
+      y: minY - paddingY - titleHeight,
+      width: folderWidth,
+      height: folderHeight,
+    });
+  }
+
+  const nodes: Node[] = [];
+
+  // Emit folder containers shallowest-first so React Flow sees parents
+  // before their nested folder/class children.
+  const foldersForEmit = [...folders].sort(
+    (a, b) => folderDepth(a.id) - folderDepth(b.id),
+  );
+  for (const f of foldersForEmit) {
+    const abs = folderAbs.get(f.id);
+    if (!abs) continue;
+    const parentAbs = f.parent ? folderAbs.get(f.parent) : undefined;
+    const px = parentAbs ? abs.x - parentAbs.x : abs.x;
+    const py = parentAbs ? abs.y - parentAbs.y : abs.y;
+    const depth = folderDepth(f.id);
     const folderIdx = folders.indexOf(f) % FOLDER_COLORS.length;
     const fc = FOLDER_COLORS[folderIdx];
     nodes.push({
       id: f.id,
       type: 'folder',
-      position: { x: minX - paddingX, y: minY - paddingY - titleHeight },
-      zIndex: -1,
+      position: { x: px, y: py },
+      ...(parentAbs ? { parentId: f.parent, expandParent: true } : {}),
+      zIndex: -100 + depth,
       data: { label: f.label },
       style: {
-        width: folderWidth,
-        height: maxY - minY + paddingY * 2 + titleHeight,
+        width: abs.width,
+        height: abs.height,
         background: fc.bg,
         border: `2px dashed ${fc.border}`,
         borderRadius: 12,
@@ -392,32 +515,18 @@ function layoutGraph(
     });
   }
 
-  // Class nodes
+  // Class nodes — position relative to their direct folder (if any).
   for (const n of mapData.nodes) {
     const pos = g.node(n.id);
-    const folder = folders.find((f) => f.id === n.folder);
-    let x = pos.x - 170;
-    let y = pos.y;
-    if (folder) {
-      const children = folderMap.get(folder.id) ?? [];
-      const paddingX = 50;
-      const paddingY = 40;
-      const titleHeight = 36;
-      let minX = Infinity, minY = Infinity;
-      for (const c of children) {
-        const cp = g.node(c.id);
-        minX = Math.min(minX, cp.x - cp.width / 2);
-        minY = Math.min(minY, cp.y - cp.height / 2);
-      }
-      x = pos.x - 170 - (minX - paddingX);
-      y = pos.y - (minY - paddingY - titleHeight);
-    }
+    const abs = n.folder ? folderAbs.get(n.folder) : undefined;
+    const x = abs ? pos.x - 170 - abs.x : pos.x - 170;
+    const y = abs ? pos.y - abs.y : pos.y;
     const traceHits = traceHitsMap.get(n.id);
     nodes.push({
       id: n.id,
       type: 'uml',
       position: { x, y },
-      ...(n.folder ? { parentId: n.folder, expandParent: true } : {}),
+      ...(abs ? { parentId: n.folder, expandParent: true } : {}),
       data: {
         className: n.className,
         stereotype: n.stereotype,
