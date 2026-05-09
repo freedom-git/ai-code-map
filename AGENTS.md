@@ -2,6 +2,30 @@
 
 **⚠️ RULE: Before any code analysis, check if a project exists in `projects/`. If no project folder exists, ask the user to provide a repo path and project name first. Create `projects/{name}/project.json` with the repo path before proceeding.**
 
+**⚠️ RULE: After finishing the user's ask (any map or trace update), always end the reply with the viewer link so the user can see the result.**
+1. Check whether the Vite dev server is already running on port 5173:
+   ```powershell
+   Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+   ```
+   Note: `-State Listen` is essential — without it, TimeWait sockets show `OwningProcess=0` and `Stop-Process` fails.
+2. If the port is **in use**, just tell the user: open **http://localhost:5173/** and (if relevant) which project / trace to pick.
+3. If the port is **free**, launch the viewer in a detached background process from the **resolved skill directory**, then give the link:
+   ```powershell
+   # Resolve the skill folder to its physical path (in case it is a junction/symlink),
+   # then cd into web/. $PSScriptRoot here is a placeholder — substitute the actual
+   # skill folder path the agent was loaded from.
+   $skillDir = '<PATH-TO-THIS-SKILL-FOLDER>'
+   $item = Get-Item $skillDir
+   if ($item.LinkType -in @('Junction','SymbolicLink')) { $skillDir = $item.Target[0] }
+   cd (Join-Path $skillDir 'web')
+   npm run dev
+   ```
+   **Why resolve the link?** On Windows the skill folder is often a junction (e.g., `<user>\.copilot\skills\code-insight` → some other drive). Vite/Rollup get confused by symlink resolution and may serve raw TSX. Always cd to the physical path.
+   Use `mode="async"` + `detach: true` (so the server survives the session). Wait ~5 s, read the log file to confirm `Local: http://localhost:5173/`, then tell the user to open it.
+4. Always include a one-line hint about which **project** to select and (for trace work) which **trace** name to pick from the dropdown.
+
+**⚠️ RULE: Pinned dev dependencies.** `web/package.json` must use `vite ^5.4.21` + `@vitejs/plugin-react ^4.7.0`. Do NOT upgrade to Vite 6/7 or plugin-react 6 — they break the JSX transform pipeline (server returns raw TSX as `text/javascript`, browser throws `SyntaxError: missing ) after argument list`). If you see this symptom, downgrade and clear `web/node_modules/.vite/` then restart.
+
 # Code Insight - Agent Instructions
 
 ## Graph Generation Rules
