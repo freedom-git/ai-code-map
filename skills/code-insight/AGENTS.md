@@ -94,50 +94,22 @@ The **map** is a persistent, accumulative view of the repo's code structure.
 5. **Folders as containers.** Group nodes by their folder/directory. Folders may be **nested** — see _Folder Nesting_ below.
 6. **File**: `projects/{repo-name}/map.json`
 
-### Trace Mode (`trace-{name}.json`)
-A **trace** overlays a numbered call flow path on top of the map — like drawing a route on a real map.
+### Trace Mode — superseded by the `code-flow` skill
 
-**Rules:**
-1. **Based on the map.** Trace references nodes that exist in `map.json`. If a node needed for the trace doesn't exist in the map yet, add it to the map first.
-2. **One call stack per trace.** Each trace represents exactly one execution flow (e.g., "what happens when GET /endpoint/versions is called").
-3. **Named traces.** Every trace has a dedicated name. File: `trace-{name}.json` (e.g., `trace-get-versions.json`, `trace-startup.json`). Multiple traces can coexist.
-4. **Numbered steps.** Each step in the trace has a number indicating execution order.
-5. **Start point marked.** The first node in the trace is marked as `start: true`.
-6. **Step limit.** User can specify how many steps to trace. When reached, stop and wait for feedback before continuing deeper.
-7. **Trace edges are separate from map edges.** Trace uses `type: "trace"` edges with step numbers, rendered as a distinct style (e.g., bold red/orange numbered line) overlaid on the map's structural edges.
-7. **File**: `projects/{repo-name}/traces/{name}.json`
+This repo previously hosted a built-in "Trace Mode" that wrote
+`projects/{repo}/traces/{name}.json` to overlay a numbered call flow on the
+map. **That functionality now lives in the separate `code-flow` skill**
+(also hosted in this repo under `skills/code-flow/`). When the user asks to
+trace a call flow, invoke the `code-flow` skill; it produces a canonical
+`flow.json` that any consumer (including this skill's viewer) can render.
 
-### Trace JSON Schema (`traces/{name}.json`)
-```json
-{
-  "name": "get-versions",
-  "description": "GET workspaces/{wid}/mlmodels/{mid}/endpoint/versions call flow",
-  "steps": [
-    {
-      "step": 1,
-      "nodeId": "program",
-      "method": "Main(args)",
-      "description": "Entry point — creates WorkloadApp and calls RunAsync"
-    },
-    {
-      "step": 2,
-      "nodeId": "workload-app",
-      "method": "RunAsync()",
-      "description": "Registers endpoints and initializes workload context"
-    }
-  ]
-}
-```
-
-### Trace Display Rules
-1. **Step number on method row.** In trace mode, the step number appears as a red number inline before the target method inside the UML node — no background highlight, no color change on the method text.
-2. **Trace edges show method.** Edge labels show `{step}. {method}` (e.g., `2. RunAsync()`).
-3. **Left sidebar.** Trace steps are listed in a left sidebar panel with step number, method, and description on separate lines.
-4. **Node border.** Traced nodes get a red border and glow, but no other styling changes inside.
+Existing `projects/{repo}/traces/*.json` files continue to load in the
+viewer using the legacy schema; new traces should be authored via
+`code-flow`.
 
 ### Mode Switching
-- When user asks about **structure** ("show me the classes in X", "what extends Y") → **Map mode**
-- When user asks about **flow** ("what happens when X is called", "trace the call from A to B") → **Trace mode**
+- When user asks about **structure** ("show me the classes in X", "what extends Y") → **Map mode** (this skill)
+- When user asks about **call flow** ("what happens when X is called", "trace the call from A to B") → invoke the **`code-flow`** skill
 - When user says "add to map" or "remember this" → **Map mode** (persist nodes)
 
 ### JSON Schema

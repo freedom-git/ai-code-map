@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// Register this repo as a Claude Code / Copilot CLI skill by symlinking it
-// into the agent's skills directory.
+// Register the skills hosted in this repo as Claude Code / Copilot CLI skills
+// by symlinking each one into the agent's skills directory.
 //
 // Usage:
 //   node scripts/register.mjs
 //   node scripts/register.mjs --target=claude
 //   node scripts/register.mjs --target=copilot
-//   node scripts/register.mjs --target=both        (default)
-//   node scripts/register.mjs --force              replace an existing link
-//   node scripts/register.mjs --dry-run            print actions, do nothing
+//   node scripts/register.mjs --target=both         (default)
+//   node scripts/register.mjs --skill=code-flow     register just one skill
+//   node scripts/register.mjs --force               replace an existing link
+//   node scripts/register.mjs --dry-run             print actions, do nothing
 //
 // On Windows we use a directory junction (no admin / Developer Mode needed).
 // On macOS / Linux we use a regular directory symlink.
@@ -19,10 +20,16 @@ import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SKILL_NAME = "code-insight";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const IS_WINDOWS = platform() === "win32";
 const LINK_TYPE = IS_WINDOWS ? "junction" : "dir";
+
+// Each skill in this repo gets one junction per target agent.
+// `source` is the directory the junction points at, relative to REPO_ROOT.
+const SKILLS = [
+  { name: "code-insight", source: "skills/code-insight" },
+  { name: "code-flow", source: "skills/code-flow" },
+];
 
 const TARGET_DIRS = {
   claude: join(homedir(), ".claude", "skills"),
@@ -30,27 +37,38 @@ const TARGET_DIRS = {
 };
 
 function parseArgs(argv) {
-  const opts = { target: "both", force: false, dryRun: false };
+  const opts = { target: "both", skill: null, force: false, dryRun: false };
   for (const arg of argv) {
     if (arg === "--force") opts.force = true;
     else if (arg === "--dry-run") opts.dryRun = true;
     else if (arg.startsWith("--target=")) opts.target = arg.slice("--target=".length);
+    else if (arg.startsWith("--skill=")) opts.skill = arg.slice("--skill=".length);
     else if (arg === "-h" || arg === "--help") opts.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (!["claude", "copilot", "both"].includes(opts.target)) {
     throw new Error(`--target must be claude|copilot|both (got: ${opts.target})`);
   }
+  if (opts.skill && !SKILLS.some((s) => s.name === opts.skill)) {
+    const known = SKILLS.map((s) => s.name).join(", ");
+    throw new Error(`--skill must be one of: ${known} (got: ${opts.skill})`);
+  }
   return opts;
 }
 
 function printHelp() {
-  console.log(`Register ${SKILL_NAME} as a Claude / Copilot CLI skill.
+  const skillList = SKILLS.map((s) => s.name).join(", ");
+  console.log(`Register skills from this repo as Claude / Copilot CLI skills.
+
+Skills in this repo: ${skillList}
 
 Usage:
-  node scripts/register.mjs [--target=claude|copilot|both] [--force] [--dry-run]
+  node scripts/register.mjs [--target=claude|copilot|both]
+                            [--skill=<name>]
+                            [--force] [--dry-run]
 
-Default target is "both". --force replaces an existing symlink (never a real
+Default target is "both" and all skills are registered. --skill=<name> restricts
+the run to a single skill. --force replaces an existing symlink (never a real
 directory). --dry-run prints planned actions without touching the filesystem.`);
 }
 
@@ -88,8 +106,15 @@ async function pathsEqual(a, b) {
   }
 }
 
-async function registerOne(label, parentDir, opts) {
-  const linkPath = join(parentDir, SKILL_NAME);
+async function registerOne(label, parentDir, skill, opts) {
+  const linkPath = join(parentDir, skill.name);
+  const sourcePath = resolve(REPO_ROOT, skill.source);
+
+  if (!existsSync(sourcePath)) {
+    console.error(`✗ ${label}/${skill.name}: source directory missing → ${sourcePath}`);
+    return false;
+  }
+
   let stat;
   try {
     stat = await lstat(linkPath);
@@ -99,25 +124,25 @@ async function registerOne(label, parentDir, opts) {
 
   if (stat) {
     const linkTarget = await readLinkTarget(linkPath);
-    if (linkTarget && (await pathsEqual(linkTarget, REPO_ROOT))) {
-      console.log(`✓ ${label}: already linked → ${linkPath}`);
+    if (linkTarget && (await pathsEqual(linkTarget, sourcePath))) {
+      console.log(`✓ ${label}/${skill.name}: already linked → ${linkPath}`);
       return true;
     }
     if (linkTarget) {
       // Symlink/junction pointing somewhere else.
       if (!opts.force) {
         console.error(
-          `✗ ${label}: ${linkPath} already exists and points at ${linkTarget}.\n` +
+          `✗ ${label}/${skill.name}: ${linkPath} already exists and points at ${linkTarget}.\n` +
             `  Use --force to replace it.`,
         );
         return false;
       }
-      console.log(`↻ ${label}: removing stale link → ${linkTarget}`);
+      console.log(`↻ ${label}/${skill.name}: removing stale link → ${linkTarget}`);
       if (!opts.dryRun) await unlink(linkPath);
     } else {
       // Real directory or file — refuse to touch it, even with --force.
       console.error(
-        `✗ ${label}: ${linkPath} exists and is NOT a symlink.\n` +
+        `✗ ${label}/${skill.name}: ${linkPath} exists and is NOT a symlink.\n` +
           `  Refusing to delete real data. Move or remove it manually first.`,
       );
       return false;
@@ -129,12 +154,12 @@ async function registerOne(label, parentDir, opts) {
     if (!opts.dryRun) await mkdir(parentDir, { recursive: true });
   }
 
-  console.log(`→ ${label}: ${linkPath}  →  ${REPO_ROOT}  (${LINK_TYPE})`);
+  console.log(`→ ${label}/${skill.name}: ${linkPath}  →  ${sourcePath}  (${LINK_TYPE})`);
   if (!opts.dryRun) {
     try {
-      await symlink(REPO_ROOT, linkPath, LINK_TYPE);
+      await symlink(sourcePath, linkPath, LINK_TYPE);
     } catch (err) {
-      console.error(`✗ ${label}: failed to create link: ${err.message}`);
+      console.error(`✗ ${label}/${skill.name}: failed to create link: ${err.message}`);
       if (IS_WINDOWS && err.code === "EPERM") {
         console.error(
           "  Hint: Windows directory junctions normally don't need admin.\n" +
@@ -144,7 +169,7 @@ async function registerOne(label, parentDir, opts) {
       return false;
     }
   }
-  console.log(`✓ ${label}: linked.`);
+  console.log(`✓ ${label}/${skill.name}: linked.`);
   return true;
 }
 
@@ -163,14 +188,17 @@ async function main() {
   }
 
   const targets = opts.target === "both" ? ["claude", "copilot"] : [opts.target];
+  const skills = opts.skill ? SKILLS.filter((s) => s.name === opts.skill) : SKILLS;
 
-  console.log(`Registering '${SKILL_NAME}' from ${REPO_ROOT}`);
+  console.log(`Registering ${skills.length} skill(s) from ${REPO_ROOT}`);
   if (opts.dryRun) console.log("(dry run — no changes will be made)");
 
   let allOk = true;
   for (const t of targets) {
-    const ok = await registerOne(t, TARGET_DIRS[t], opts);
-    if (!ok) allOk = false;
+    for (const skill of skills) {
+      const ok = await registerOne(t, TARGET_DIRS[t], skill, opts);
+      if (!ok) allOk = false;
+    }
   }
   process.exit(allOk ? 0 : 1);
 }
