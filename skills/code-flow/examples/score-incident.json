@@ -1,0 +1,277 @@
+{
+  "schemaVersion": "1.0.0",
+  "name": "score-incident",
+  "description": "Score request that returned 500 because the auto-slept ACA version did not finish cold-start before MWC's pre-timeout window expired.",
+  "mode": "incident",
+  "incident": {
+    "ids": [
+      { "type": "RootActivityId", "value": "11e74c32-399e-4685-89e8-4bdefe6fdb04" },
+      { "type": "x-ms-parent-activity-id", "value": "001f0693-85bb-4edd-9468-3cca9b58dbf5" },
+      { "type": "artifactId", "value": "0aea062a-9676-4396-8fbb-8c43213ab3bd" },
+      { "type": "workspaceId", "value": "d4685b2a-a1c6-46d1-94a5-4b515face79e" },
+      { "type": "capacityId", "value": "25675FF5-0954-49CD-89DE-9D6E888A7919" }
+    ],
+    "url": "https://pbipdailyeus2euap-daily.pbidedicated.windows.net/webapi/capacities/25675FF5-0954-49CD-89DE-9D6E888A7919/workloads/ML/ML/Automatic/workspaces/d4685b2a-a1c6-46d1-94a5-4b515face79e/mlmodels/0aea062a-9676-4396-8fbb-8c43213ab3bd/endpoint/versions/1/score",
+    "description": "Score call against an auto-slept version on daily.pbidedicated.windows.net (Daily, EUS2 EUAP). Backend received the request at 09:37:05.480 and returned 500 InternalServerError at 09:38:30.505 (~85s later) with body 'This model endpoint is configured for auto-sleep and is scaling back up from zero. Please try your request again.' Caller wants to know why the score failed and whether the canned 500 is the only failure or hides a second issue.",
+    "rootCause": "The version was scaled to zero (auto-sleep). The scale-down probe at step 6 returned true, so the workload entered the wake-up branch and bounded the forward call with a linked CancellationTokenSource (CancelAfter(GetModelEndpointPreTimeoutWindow())). The ACA cold-start did not finish within that pre-timeout budget, so MLHttpClient.SendAsync at step 7 threw TaskCanceledException, the catch block returned the friendly 500 (\"...scaling back up from zero...\"), and the failure-branch closeout fired (Failed cert event at step 14, Failed model-monitoring event at step 16, error response at step 17). The container side eventually reached steps 8-13 about 20 seconds AFTER MWC had already returned 500, and at step 13 surfaced a separate latent payload bug: the model declares a single tensor input that expects a JSON list/tuple but the body was a dict — predict_utils logged \"Expected list/tuple JSON for single tensor input, got <class 'dict'>\". So even a successful retry of the same payload (when warm) would fail at step 13 with 400 InvalidInput. Mitigation: caller must (a) retry once the replica is warm AND (b) reshape the body to list/tuple per the model's MLflow signature."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "kind": "call-step",
+      "title": "Caller sends score POST",
+      "entity": { "repo": "external", "path": "<caller>" },
+      "action": "Caller sends POST .../mlmodels/<artifactId>/endpoint/versions/<version>/score with the JSON tensor payload.",
+      "status": "success"
+    },
+    {
+      "step": 2,
+      "kind": "call-step",
+      "title": "MWC score controller receives request",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/Controllers/ModelEndpointMwcController.cs",
+        "class": "ModelEndpointMwcController",
+        "function": "InvokeScoreModelEndpointVersionAsync",
+        "line": 221
+      },
+      "action": "Confirms the request reached the MWC API and routes it to ScoreVersionAsync on the manager.",
+      "logAnchor": {
+        "marker": "Checking for moniker eviction for moniker Id",
+        "source": "Core/Microsoft.MachineLearning.HttpStack/BaseMLControllerWithoutDefaultAccessContext.cs:363"
+      },
+      "status": "success"
+    },
+    {
+      "step": 3,
+      "kind": "failure-point",
+      "title": "Read endpoint metadata (Redis → Cosmos fallback)",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 728
+      },
+      "action": "Reads endpoint metadata: Redis first, Cosmos fallback. Throws EndpointNotFound if neither has a record.",
+      "status": "success"
+    },
+    {
+      "step": 4,
+      "kind": "failure-point",
+      "title": "Resolve requested version",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 729
+      },
+      "action": "Resolves the request version string. If empty, returns 404 NotFound.",
+      "status": "success"
+    },
+    {
+      "step": 5,
+      "kind": "failure-point",
+      "title": "Version-state precondition",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1066
+      },
+      "action": "Asserts versionState in (Running, Updating, UpdateFailed) AND envState == Running. If false, short-circuits to Initializing branch or 409 Conflict.",
+      "status": "success"
+    },
+    {
+      "step": 6,
+      "kind": "call-step",
+      "title": "Scale-down probe (Redis)",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "function": "IsModelEndpointVersionScaledDown",
+        "line": 1070
+      },
+      "action": "Queries Redis for the version's current ACA replica count. Decides whether to wrap the forward call in a cold-start cancellation timeout. In this incident the probe returned TRUE — version was scaled to zero — so execution took the wake-up branch at L1072.",
+      "status": "success"
+    },
+    {
+      "step": 7,
+      "kind": "failure-point",
+      "title": "Forward score request to ACA container (wake-up branch)",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "function": "ScoreVersionInternalAsync",
+        "line": 1077
+      },
+      "action": "ForwardScoreRequestAsync posts the streamed payload to the ACA container. The wake-up branch bounds the call with a linked CTS via CancelAfter(GetModelEndpointPreTimeoutWindow()). Here the CTS tripped at ~85s while MLHttpClient.SendAsync was still waiting; the catch block logged 'Score call near timeout' and returned the canned 500.",
+      "logAnchor": {
+        "marker": "ScoreVersionInternalAsync Score call near timeout. Returning InternalServerError.",
+        "source": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs:1081"
+      },
+      "status": "failure"
+    },
+    {
+      "step": 8,
+      "kind": "failure-point",
+      "title": "NGINX ingress accepts POST",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "docker/endpoint-ingress/nginx.conf.top",
+        "line": 34
+      },
+      "action": "NGINX on endpoint-ingress port 8080 accepted the POST; the per-version location block existed. Default 503 \"Version Unavailable\" was NOT hit. The upstream proxy_pass to the model-runner only completed ~20s AFTER MWC's TaskCanceledException — too late.",
+      "logAnchor": {
+        "marker": "POST /versions/",
+        "source": "docker/endpoint-ingress/nginx.conf.top:87"
+      },
+      "status": "success"
+    },
+    {
+      "step": 9,
+      "kind": "failure-point",
+      "title": "JWT auth subrequest",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/auth_endpoint.py",
+        "function": "authorize",
+        "line": 163
+      },
+      "action": "Bearer JWT validated against tenant JWKS; principal id checked against ML_WORKLOAD_PRINCIPAL_ID allowlist. Inferred from step 10's 'Hit [JSON] Probe' which only fires after Auth_OK.",
+      "logAnchor": {
+        "marker": "Authenticating request: POST",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/auth_endpoint.py:166"
+      },
+      "status": "success"
+    },
+    {
+      "step": 10,
+      "kind": "failure-point",
+      "title": "Score handler entry",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "score_handler",
+        "line": 91
+      },
+      "action": "Gunicorn dispatched the POST to the Flask score blueprint and parsed the JSON body. Critical timing — this ran at 09:38:50.235, 20s AFTER MWC's TCE at 09:38:30.50.",
+      "logAnchor": {
+        "marker": "Hit [JSON] Probe",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:93"
+      },
+      "status": "success"
+    },
+    {
+      "step": 11,
+      "kind": "failure-point",
+      "title": "Load model (cold-start path)",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "get_cached_predict_utils",
+        "line": 55
+      },
+      "action": "Cold-load path ran (no in-process cache because the Gunicorn worker had just started). Loaded the MLflow PredictUtils wrapper from /opt/model.",
+      "logAnchor": {
+        "marker": "Model loaded and cached successfully",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:81"
+      },
+      "status": "success"
+    },
+    {
+      "step": 12,
+      "kind": "failure-point",
+      "title": "Format branch + tensor-flight gate",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "line": 182
+      },
+      "action": "Payload formatType == 'tensor' and MLEndpointTensorSupport flight is ON for this tenant on Daily, so the Tensor branch ran without rejection.",
+      "logAnchor": {
+        "marker": "Loading inputs as Tensor.",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:199"
+      },
+      "status": "success"
+    },
+    {
+      "step": 13,
+      "kind": "failure-point",
+      "title": "MLflow predict() — payload-shape failure",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "translate_inputs_outputs_and_predict",
+        "line": 202
+      },
+      "action": "predict_utils reached the input-shaping step and REJECTED the payload before invoking TensorFlow/PyTorch. The model declared a single tensor input requiring a JSON list/tuple but the body was a dict. Inside the container this maps to 400 InvalidInput — but the response never reached the caller because MWC had already returned the cold-start 500 20s earlier. Latent payload bug.",
+      "logAnchor": {
+        "marker": "Expected list/tuple JSON for single tensor input, got <class 'dict'>",
+        "source": "microsoft/fabric/datascience/modelendpoint/predict_utils.py"
+      },
+      "status": "failure"
+    },
+    {
+      "step": 14,
+      "kind": "call-step",
+      "title": "Emit certified InvokeModelEndpointVersion event",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1095
+      },
+      "action": "Always fires regardless of HTTP outcome. Emitted with ActivityStatus.Failed (response was 500, not 200).",
+      "status": "success"
+    },
+    {
+      "step": 15,
+      "kind": "call-step",
+      "title": "Fire-and-forget update of last-score-time",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1099
+      },
+      "action": "Success-only branch — not executed in this incident. Skipped because step 7 returned 500.",
+      "status": "skipped"
+    },
+    {
+      "step": 16,
+      "kind": "call-step",
+      "title": "Emit Score / Succeeded model-monitoring event",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1100
+      },
+      "action": "Succeeded variant did not fire. Failure-branch counterpart at L1114 fired instead with ActivityStatus.Failed and statusCode 500, plus the L1125 trace 'Received error response from score call.'",
+      "logAnchor": {
+        "marker": "Received error response from score call.",
+        "source": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs:1125"
+      },
+      "status": "skipped"
+    },
+    {
+      "step": 17,
+      "kind": "call-step",
+      "title": "Return scored response to caller",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1110
+      },
+      "action": "Success return at L1110 was not executed. Control fell through to the failure-branch return at L1141, which sent the 500 body ('...scaling back up from zero...') back to the caller.",
+      "logAnchor": {
+        "marker": "ML API exception resulting in 500 in ModelEndpointMwcController:InvokeScoreModelEndpointVersionAsync",
+        "source": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs:1141"
+      },
+      "status": "skipped"
+    }
+  ]
+}

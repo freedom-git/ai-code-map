@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://code-insight/skills/code-flow/schema/flow.schema.json",
+  "title": "code-flow flow.json",
+  "description": "Canonical artifact produced by the code-flow skill. A structured walk of a code path that downstream consumers (docs, viewers, incident postmortems) can enrich and render.",
+  "type": "object",
+  "required": ["schemaVersion", "name", "mode", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semver string for the flow.json schema. Bump when the schema gains/loses fields. Current: 1.0.0.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Filesystem-safe short identifier for the flow (used as the artifact's basename).",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional one-sentence summary of what this flow covers."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["base", "incident"],
+      "description": "base = pure code-walk; incident = code-walk grounded in a specific failed run's logs."
+    },
+    "incident": {
+      "type": "object",
+      "description": "Present only when mode == 'incident'. Captures the specific failed run being investigated.",
+      "required": ["ids", "rootCause"],
+      "additionalProperties": false,
+      "properties": {
+        "ids": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Typed identifiers that locate the run in logs. Type strings are free-form (e.g. RootActivityId, requestId, traceId, workspaceId).",
+          "items": {
+            "type": "object",
+            "required": ["type", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "minLength": 1 },
+              "value": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "url": {
+          "type": "string",
+          "description": "Optional URL of the failing request, useful when the flow models an HTTP path."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional free-text from the user. Anything incident-related that isn't an ID — symptoms, scenario, environment, repro notes. Quoted verbatim; not paraphrased."
+        },
+        "rootCause": {
+          "type": "string",
+          "description": "Causal chain explaining why the run failed: what triggered it, why it failed, cascading effects. Required in incident mode.",
+          "minLength": 1
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/step" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "mode": { "const": "incident" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "required": ["incident"],
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "required": ["status"]
+            }
+          }
+        }
+      },
+      "else": {
+        "not": { "required": ["incident"] },
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "not": { "required": ["status"] }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "step": {
+      "type": "object",
+      "required": ["step", "kind", "title", "entity", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing integer starting at 1. Never reset, never skip."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["failure-point", "call-step"],
+          "description": "failure-point = throws/branches/cancels/retries; call-step = everything else worth noting."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-line 'who does what' headline, scannable in a table."
+        },
+        "entity": {
+          "type": "object",
+          "description": "Where the step lives in code. Required.",
+          "required": ["repo", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "repo": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "class": { "type": "string" },
+            "function": { "type": "string" },
+            "line": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Two-sentence max prose: what it does, and how it fails (when applicable). No code snippets."
+        },
+        "codeLink": {
+          "type": "string",
+          "description": "Optional URL to the source line in a hosted repo (ADO/GitHub/GitLab). Omit for local-only repos."
+        },
+        "logAnchor": {
+          "type": "object",
+          "description": "Optional pointer to an observable log/trace line emitted by the step, used by incident mode for status inference.",
+          "required": ["marker"],
+          "additionalProperties": false,
+          "properties": {
+            "marker": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Exact log string (or stable marker/event-id) emitted by the step. Greppable in source."
+            },
+            "source": {
+              "type": "string",
+              "description": "Optional URL of the log-emit site (not the log table or query UI)."
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": ["success", "failure", "skipped", "unknown"],
+          "description": "Only present in incident mode. Required on every step when present at all."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,243 @@
+{
+  "schemaVersion": "1.0.0",
+  "name": "score-flow",
+  "description": "Score (inference) request through MWC and ACA inference container — happy path.",
+  "mode": "base",
+  "steps": [
+    {
+      "step": 1,
+      "kind": "call-step",
+      "title": "Caller sends score POST",
+      "entity": {
+        "repo": "external",
+        "path": "<caller>"
+      },
+      "action": "Caller (Fabric Portal Test endpoint / REST / notebook SDK) sends POST .../mlmodels/<artifactId>/endpoint/versions/<version>/score with the JSON / DataFrame payload in the body. The x-ms-parent-activity-id header is the correlation key into backend traces."
+    },
+    {
+      "step": 2,
+      "kind": "call-step",
+      "title": "MWC score controller receives request",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/Controllers/ModelEndpointMwcController.cs",
+        "class": "ModelEndpointMwcController",
+        "function": "InvokeScoreModelEndpointVersionAsync",
+        "line": 221
+      },
+      "action": "Confirms the request reached the MWC API and routes it to ScoreVersionAsync on the manager.",
+      "logAnchor": {
+        "marker": "Checking for moniker eviction for moniker Id",
+        "source": "Core/Microsoft.MachineLearning.HttpStack/BaseMLControllerWithoutDefaultAccessContext.cs:363"
+      }
+    },
+    {
+      "step": 3,
+      "kind": "failure-point",
+      "title": "Read endpoint metadata (Redis → Cosmos fallback)",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 728
+      },
+      "action": "Reads endpoint metadata: tries the Redis cache first, falls back to Cosmos central store. Throws EndpointNotFound if neither has a record for the artifact."
+    },
+    {
+      "step": 4,
+      "kind": "failure-point",
+      "title": "Resolve requested version",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 729
+      },
+      "action": "Resolves the request version string against the metadata's known versions. If the resolver returns empty, short-circuits with 404 NotFound \"Version {version} not found\" and emits a Failed model-monitoring event."
+    },
+    {
+      "step": 5,
+      "kind": "failure-point",
+      "title": "Version-state precondition",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1066
+      },
+      "action": "Asserts versionState in (Running, Updating, UpdateFailed) AND envState == Running. If either side is false the flow short-circuits to the Initializing branch (V1) or returns 409 Conflict (V2)."
+    },
+    {
+      "step": 6,
+      "kind": "call-step",
+      "title": "Scale-down probe (Redis)",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "function": "IsModelEndpointVersionScaledDown",
+        "line": 1070
+      },
+      "action": "Queries Redis for the version's current ACA replica count to decide whether to wrap the forward call in a cold-start cancellation timeout. Both branches end up calling ForwardScoreRequestAsync; only the cancellation token differs."
+    },
+    {
+      "step": 7,
+      "kind": "failure-point",
+      "title": "Forward score request to ACA container",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "function": "ForwardScoreRequestAsync",
+        "line": 1091
+      },
+      "action": "Builds the ACA managed-environment URL, fetches an MSI token for the app audience, and POSTs the streamed payload to the ACA inference container. Throws TaskCanceledException on cold-start timeout or HTTP error from the container.",
+      "logAnchor": {
+        "marker": "Executed Container app API: response code",
+        "source": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs:1322"
+      }
+    },
+    {
+      "step": 8,
+      "kind": "failure-point",
+      "title": "NGINX ingress accepts POST",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "docker/endpoint-ingress/nginx.conf.top",
+        "line": 34
+      },
+      "action": "Request lands on the endpoint-ingress container's NGINX on port 8080. NGINX matches a per-version location block; if none exists yet, the default returns 503 \"Version Unavailable/Not setup yet\". Upstream failures map to 502/504.",
+      "logAnchor": {
+        "marker": "POST /versions/",
+        "source": "docker/endpoint-ingress/nginx.conf.top:87"
+      }
+    },
+    {
+      "step": 9,
+      "kind": "failure-point",
+      "title": "JWT auth subrequest",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/auth_endpoint.py",
+        "function": "authorize",
+        "line": 163
+      },
+      "action": "NGINX's auth_request /auth issues an internal subrequest to the colocated Gunicorn sidecar; bearer JWT is decoded with RS256 against the tenant JWKS, then the oid claim is checked against ML_WORKLOAD_PRINCIPAL_ID allowlist. Returns 401 on invalid token, 403 on non-allowlisted principal.",
+      "logAnchor": {
+        "marker": "Authenticating request: POST",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/auth_endpoint.py:166"
+      }
+    },
+    {
+      "step": 10,
+      "kind": "failure-point",
+      "title": "Score handler entry",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "score_handler",
+        "line": 91
+      },
+      "action": "NGINX proxy_passes to the per-version model-runner Container App; Gunicorn dispatches the POST to the Flask score blueprint. Parses the body as JSON and Pydantic-validates it as ModelRunnerRequestPayload; returns 400 InvalidInput on JsonDecodeError or ValidationError.",
+      "logAnchor": {
+        "marker": "Hit [JSON] Probe",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:93"
+      }
+    },
+    {
+      "step": 11,
+      "kind": "failure-point",
+      "title": "Load model (cold-start path)",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "get_cached_predict_utils",
+        "line": 55
+      },
+      "action": "Returns the in-process cached MLflow PredictUtils if already loaded; otherwise fetches model metadata via mlflow.models.get_model_info and constructs a fresh PredictUtils under a double-checked lock. On error: clears the cache and raises RuntimeError, which score_handler converts to a 500.",
+      "logAnchor": {
+        "marker": "Model loaded and cached successfully",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:81"
+      }
+    },
+    {
+      "step": 12,
+      "kind": "failure-point",
+      "title": "Format branch + tensor-flight gate",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "line": 182
+      },
+      "action": "Branches on payload formatType. The dataframe branch parses inputs as a DataFrame; the tensor branch is gated by is_tensor_support_enabled() which reads the MODELENDPOINT_TENSOR_SUPPORT env var set by the workload's tensor-support feature flight. If the flight is OFF, returns 400 UnsupportedItemType.",
+      "logAnchor": {
+        "marker": "Loading inputs as",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:183"
+      }
+    },
+    {
+      "step": 13,
+      "kind": "failure-point",
+      "title": "MLflow predict()",
+      "entity": {
+        "repo": "FabricDS-ModelEndpoint",
+        "path": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py",
+        "function": "translate_inputs_outputs_and_predict",
+        "line": 202
+      },
+      "action": "Invokes the underlying ML framework's predict() — TensorFlow / PyTorch / scikit-learn / XGBoost etc., depending on the model flavor MLflow detected at load time. MlflowException / ValueError / AttributeError / NotImplementedError map to 400 via typed exception handlers; any other exception becomes a 500 GenericExceptionError.",
+      "logAnchor": {
+        "marker": "Returning model prediction output back to caller",
+        "source": "microsoft/fabric/datascience/modelendpoint/routes/json_endpoint.py:205"
+      }
+    },
+    {
+      "step": 14,
+      "kind": "call-step",
+      "title": "Emit certified InvokeModelEndpointVersion event",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1095
+      },
+      "action": "After the ACA forward returns, derives ActivityStatus from the response (Succeeded if 200 OK, else Failed) and always emits the certified event for the InvokeModelEndpointVersion audit activity — the durable record that a score attempt happened."
+    },
+    {
+      "step": 15,
+      "kind": "call-step",
+      "title": "Fire-and-forget update of last-score-time",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1099
+      },
+      "action": "Only when IsSuccessStatusCode is true. Spawns a Task.Run (fire-and-forget via DoNotWait) that updates the Cosmos lastScoreTime field for the endpoint. Failures here do not block the response; the value is consumed downstream by auto-sleep / scale-down decisions."
+    },
+    {
+      "step": 16,
+      "kind": "call-step",
+      "title": "Emit Score / Succeeded model-monitoring event",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1100
+      },
+      "action": "Emits a model-monitoring telemetry event with ActivityStatus.Succeeded, the Score operation name, response status code, version number, default-version flag, input row count, and model flavor. Drives operational dashboards. Failure branch emits the same event with ActivityStatus.Failed."
+    },
+    {
+      "step": 17,
+      "kind": "call-step",
+      "title": "Return scored response to caller",
+      "entity": {
+        "repo": "workload-ml",
+        "path": "Components/ModelEndpoints/Microsoft.MachineLearning.ModelEndpoints/ModelEndpointManagerACA.cs",
+        "class": "ModelEndpointManagerACA",
+        "line": 1110
+      },
+      "action": "Returns the HttpResponseMessage carrying the ACA container's prediction payload back through ScoreVersionAsync → controller → client. Synchronous request ends here — no LRO polling, no background work."
+    }
+  ]
+}
